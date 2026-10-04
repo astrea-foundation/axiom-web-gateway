@@ -7,9 +7,16 @@ The proof must establish that the accepted encryption key belongs to the Axiom
 gateway workload running in that VM. Google Confidential Space and Phala dstack
 are not deployment targets for this implementation.
 
-Implementation is paused at the user's request while the deployment design is
-settled. The repository contains the shared Rust dependency foundation; none of
-the service, browser SDK, container or Azure deployment below is implemented.
+Implementation resumed on 2026-10-04. The Rust service, native/WASM verifier,
+TypeScript SDK, backend delegation, container build, measured UKI appliance
+builder and Azure deployment template are implemented. See
+[development](development.md), [protocol](protocol.md) and [Azure operations](azure.md).
+
+Local component tests and builds do not qualify Azure hardware. Still open:
+access to a development TDX VM, independent Azure firmware/boot-profile
+qualification, live boot/evidence validation, and complete browser → gateway →
+upstream provider qualification. These steps remain admission requirements; no
+hardware/workload verification bypass is available.
 
 ## 1. Qualify the Azure evidence chain first
 

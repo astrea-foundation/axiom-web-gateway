@@ -2,13 +2,15 @@
 
 ## Status and decision
 
-This repository currently establishes the Rust dependency foundation and the
-architecture. It does not implement or deploy a gateway service.
+The gateway service, browser SDK, account delegation and measured appliance
+build tooling are implemented. The deployment remains unqualified until the
+actual Azure firmware/boot profile and live evidence chain have passed the
+[Azure qualification](azure.md). No production service is deployed.
 
 The selected deployment target is an **Azure Intel TDX confidential VM**. Its
 attestation must establish the identity of the gateway workload, not just the
 presence of TDX hardware. Build a locked, measured guest appliance containing
-the gateway container and its launch policy. Verify the hardware-backed vTPM
+the gateway executable, dependencies and fixed launch configuration. Verify the hardware-backed vTPM
 chain, guest measurements, build provenance and a fresh gateway key binding
 before sending credentials or inference content. See the
 [implementation plan](implementation-plan.md) for the qualification sequence.
@@ -55,8 +57,8 @@ installation and updater code are outside this gateway's scope.
 The shared client already talks to Axiom's account-scoped ciphertext relay and
 accounting endpoints. Preserve that path where compatible. Its current
 `ApiCredential` requires an Axiom credential: browser account authentication does
-not automatically become authorized relay access. Delegation must be designed
-and validated with the platform before the gateway accepts user requests.
+not automatically become authorized relay access. The platform issues sender-constrained grants and relay credentials only to an
+attested gateway; see the [protocol](protocol.md).
 
 ## Source sharing
 
@@ -107,12 +109,12 @@ That extraction is not necessary to establish reuse now and has not been done.
 
 ## Implementation stages and acceptance
 
-1. Foundation (present): commit-pinned dependencies, independent build, documented
-   trust boundary and repository ownership. No inference listener.
-2. Transport prototype: select a TEE platform and reviewed browser transport;
+1. Foundation (implemented): commit-pinned dependencies, independent build,
+   documented trust boundary and repository ownership.
+2. Transport (implemented; Azure qualification pending): use Azure TDX and EHBP;
    independently verify the gateway image/key from a browser before enabling
    encrypted test requests. Publish the measured build's provenance.
-3. Authenticated inference: implement bounded service composition around the
+3. Authenticated inference (implemented; live qualification pending): bounded service composition around the
    shared secure client and platform-approved per-account delegation. Exercise
    provider protocols with encrypted fixtures and attested live checks.
 4. Failure qualification: prove rejection of stale/substituted attestations,

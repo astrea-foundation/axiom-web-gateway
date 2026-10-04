@@ -1,14 +1,31 @@
 [workspace]
 resolver = "3"
-members = ["crates/axiom-web-gateway-core"]
+members = ["crates/axiom-web-gateway-core", "crates/axiom-gateway-protocol", "crates/axiom-web-gateway"]
 
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
-rust-version = "1.88"
+rust-version = "1.90"
 repository = "https://github.com/astrea-foundation/axiom-web-gateway"
 
 [workspace.dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = { version = "0.10", features = ["oid"] }
+hex = "0.4"
+base64 = "0.22"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+zeroize = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+rand = "0.9"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+dcap-qvl = { version = "=0.5.2", default-features = false, features = ["std", "rustcrypto", "default-x509"] }
+axiom-gateway-protocol = { path = "crates/axiom-gateway-protocol" }
+axiom-web-gateway-core = { path = "crates/axiom-web-gateway-core" }
+azure-guest-attestation-sdk = { git = "https://github.com/Azure/azure-guest-attestation-sdk.git", rev = "23bf1d1b62d2a3fcbf3eed8f80c5a2bd54e5028b" }
+azure-tpm = { git = "https://github.com/Azure/azure-guest-attestation-sdk.git", rev = "23bf1d1b62d2a3fcbf3eed8f80c5a2bd54e5028b" }
 # One reviewed revision for the entire shared inference stack. Cargo discovers
 # these workspace crates inside the repository; no Git submodule is required.
 axiom-inference = { git = "https://github.com/astrea-foundation/axiom-desktop.git", rev = "8c4cb115f3b7fdcf5ca13d6c41efc1459c6b9fad" }

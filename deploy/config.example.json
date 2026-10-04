@@ -1,0 +1,9 @@
+{
+  "listen": "0.0.0.0:8080",
+  "public_origin": "https://gateway.example.com",
+  "backend_origin": "https://api.example.com",
+  "publisher_key": "REPLACE_WITH_PINNED_ED25519_PUBLIC_KEY_HEX",
+  "browser_origins": ["https://chat.example.com"],
+  "max_concurrency": 32,
+  "max_sessions": 512
+}

@@ -1,29 +1,28 @@
 # Axiom Web Gateway
 
-A foundation for a gateway that runs inside a trusted execution
-environment (TEE), verifies upstream model providers and bridges their encrypted
-inference protocols to a single encrypted browser protocol. The repository is
-private during development, with open-source publication planned later.
+A private development implementation of an encrypted browser gateway for an
+**Azure Intel TDX confidential VM**. The browser verifies the gateway workload
+and key; the gateway reuses Axiom's attested provider-E2EE client to verify,
+encrypt to and authenticate upstream model workers.
 
-The browser will verify the gateway before sending messages. Messages will be
-decrypted only inside the gateway enclave and the verified provider enclave.
-The ordinary Axiom backend continues to handle accounts, billing and ciphertext
-relay without receiving message plaintext.
-
-**Status:** repository and Rust dependency foundation only. There is no running
-gateway, HTTP inference endpoint, browser SDK or TEE deployment yet.
-
-Provider security and inference types are reused directly from commit-pinned
-Cargo dependencies in `axiom-desktop`; they are not copied into this repository.
+Includes the Rust service, shared native/WebAssembly evidence verifier,
+TypeScript browser/extension SDK, Docker images and a measured UKI appliance
+builder. Backend account delegation lives in `axiom-platform`. No production
+gateway is deployed. **Azure firmware qualification and a live TDX test remain
+required before enabling this for users.** An ordinary machine cannot open the
+inference listener.
 
 ```sh
-git clone --branch dev https://github.com/astrea-foundation/axiom-web-gateway.git
-cd axiom-web-gateway
-cargo check --workspace --locked
+cargo test --workspace --locked
+pnpm install --frozen-lockfile
+pnpm build
+pnpm test
 ```
 
-See the [documentation index](docs/README.md) for architecture, implementation
-stages and development instructions. Development uses `dev`; production releases
-require explicit promotion to `main`.
+Provider implementation comes from commit-pinned `axiom-desktop` Cargo crates;
+there is no Desktop submodule or required neighboring checkout. See the
+[documentation index](docs/README.md) for setup, protocol and Azure qualification.
+Development targets `dev`. The repository remains private; production promotion,
+publication and deployment require explicit authorization.
 
 Licensed under [Apache-2.0](LICENSE).

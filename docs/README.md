@@ -6,3 +6,7 @@
   attestation, browser transport, account delegation and Docker qualification.
 - [Development](development.md): independent builds, shared dependency updates
   and the branch/release workflow.
+- [Browser protocol and SDK](protocol.md): local proof verification, encrypted
+  sessions, delegated authorization and authenticated stream completion.
+- [Azure appliance and qualification](azure.md): Docker/UKI builds, Secure Boot,
+  deployment templates and the outstanding live TDX checks.
