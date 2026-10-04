@@ -1,7 +1,8 @@
 """Build a disk whose complete executable root lives in a measured UKI.
 
-This produces an UNSIGNED candidate. Publishing trust documents is a separate
-release-authority operation using a qualified Azure firmware/boot profile.
+The UKI is Secure Boot signed, but its candidate metadata is not a release trust
+document. Publishing trust documents is a separate release-authority operation
+using a qualified Azure firmware/boot profile.
 """
 import argparse
 import hashlib
@@ -55,6 +56,7 @@ def main():
     # cloud agents, executable disk mounts or an administrative network service.
     copy_binary("/usr/local/bin/axiom-web-gateway", root)
     copy_binary("/usr/bin/setpriv", root)
+    copy_binary("/usr/sbin/modprobe", root)
     shutil.copy2("/bin/busybox", root / "bin/busybox")
     for name in ["sh", "mount", "mkdir", "ip", "udhcpc", "modprobe", "chown", "chmod", "reboot"]:
         (root / "bin" / name).symlink_to("busybox")

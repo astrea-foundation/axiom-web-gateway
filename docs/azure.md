@@ -41,7 +41,9 @@ gateway binary, dynamic libraries, CA roots, minimal kernel modules and fixed
 configuration live in the embedded initramfs. Its init mounts the root read-only,
 disables core dumps, runs no SSH/login/cloud agent/container daemon, mounts no
 data disk/swap and drops privileges before launching the sole application.
-DHCP only supplies network routing; DNS configuration and launch code are baked.
+DHCP obtains and renews the network lease; DNS configuration and launch code are baked.
+The launcher uses the full kmod and util-linux executables explicitly, rather
+than BusyBox's limited applets, for signed-module loading and privilege dropping.
 Private keys/sessions exist only in protected process memory and rotate on boot.
 
 PCR4 identifies the actual PE boot image in the qualified firmware boot chain;
@@ -115,3 +117,6 @@ Before user traffic, test all of the following on a development TDX VM:
 Publish the dated evidence and limitations under docs. Local candidate signing
 keys and synthetic unit proofs are development fixtures, never release trust
 roots. Production publication/deployment still requires explicit authorization.
+
+See the [2026-10-04 local validation record](qa-2026-10-04.md) for completed
+checks and the distinction between headless boot testing and Azure qualification.

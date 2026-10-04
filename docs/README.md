@@ -10,3 +10,5 @@
   sessions, delegated authorization and authenticated stream completion.
 - [Azure appliance and qualification](azure.md): Docker/UKI builds, Secure Boot,
   deployment templates and the outstanding live TDX checks.
+- [Local validation, 2026-10-04](qa-2026-10-04.md): implementation checks and
+  remaining live Azure qualification.

@@ -93,7 +93,8 @@ def main():
         sha256(pcr11)
         sha256(profile["pcr7"])
         recipe = hashlib.sha256()
-        for path in [Path("Dockerfile"), *sorted(Path("deploy/appliance").rglob("*")), Path("scripts/build-container.sh")]:
+        tracked = subprocess.check_output(["git", "ls-files", "-z", "Dockerfile", ".dockerignore", "deploy/appliance", "scripts/build-container.sh"])
+        for path in (Path(name.decode()) for name in tracked.split(b"\0") if name):
             if path.is_file(): recipe.update(str(path).encode() + b"\0" + path.read_bytes())
         payload = {"schema_version": 1, "generation": args.generation, "source_repository": "https://github.com/astrea-foundation/axiom-web-gateway",
                    "source_revision": revision, "build_recipe_sha256": recipe.hexdigest(), "cargo_lock_sha256": digest("Cargo.lock"),
