@@ -1,0 +1,16 @@
+[package]
+name = "axiom-web-gateway-core"
+version = "0.1.0"
+description = "Shared inference foundation for the Axiom attested web gateway"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+axiom-inference.workspace = true
+axiom-openai-compat.workspace = true
+axiom-secure-client.workspace = true
+
+[lints]
+workspace = true

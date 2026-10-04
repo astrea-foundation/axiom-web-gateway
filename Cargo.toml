@@ -1,0 +1,31 @@
+[workspace]
+resolver = "3"
+members = ["crates/axiom-web-gateway-core"]
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+rust-version = "1.88"
+repository = "https://github.com/astrea-foundation/axiom-web-gateway"
+
+[workspace.dependencies]
+# One reviewed revision for the entire shared inference stack. Cargo discovers
+# these workspace crates inside the repository; no Git submodule is required.
+axiom-inference = { git = "https://github.com/astrea-foundation/axiom-desktop.git", rev = "8c4cb115f3b7fdcf5ca13d6c41efc1459c6b9fad" }
+axiom-openai-compat = { git = "https://github.com/astrea-foundation/axiom-desktop.git", rev = "8c4cb115f3b7fdcf5ca13d6c41efc1459c6b9fad" }
+axiom-secure-client = { git = "https://github.com/astrea-foundation/axiom-desktop.git", rev = "8c4cb115f3b7fdcf5ca13d6c41efc1459c6b9fad", default-features = false }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
