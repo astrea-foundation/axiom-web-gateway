@@ -5,6 +5,14 @@
 This repository currently establishes the Rust dependency foundation and the
 architecture. It does not implement or deploy a gateway service.
 
+The selected deployment target is an **Azure Intel TDX confidential VM**. Its
+attestation must establish the identity of the gateway workload, not just the
+presence of TDX hardware. Build a locked, measured guest appliance containing
+the gateway container and its launch policy. Verify the hardware-backed vTPM
+chain, guest measurements, build provenance and a fresh gateway key binding
+before sending credentials or inference content. See the
+[implementation plan](implementation-plan.md) for the qualification sequence.
+
 Use the full gateway approach: browser messages are encrypted to an attested
 gateway key, decrypted in gateway enclave memory, then encrypted using the
 selected upstream provider's verified E2EE protocol. Provider responses are
@@ -81,7 +89,9 @@ That extraction is not necessary to establish reuse now and has not been done.
    the measured image and publish inspectable build provenance for source,
    dependencies and security-sensitive configuration. Define key generation,
    evidence freshness, rotation, supported hardware status and update handling.
-   No deployment platform has been selected by this scaffold.
+   Azure Intel TDX is the selected platform. Qualify the exact VM family's
+   hardware/vTPM evidence and custom measured-image support before relying on it;
+   an application-supplied image hash is not workload attestation.
 3. **Service composition and authorization.** Resolve each user's delegated
    relay authority and enforce expiry, quotas, request/body limits, concurrency,
    cancellation and tenant isolation. Do not use a single billable user API key
