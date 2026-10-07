@@ -126,6 +126,8 @@ read-only signed documents directory and approved chat origins. The API serves
 starting the gateway to avoid a bootstrap loop. Renew policy before its 24-hour
 expiry, increasing sequence; supported releases get signed build provenance
 without end-user commit approval. Development artifacts never authorize prod.
+For an unchanged qualified build, publish a new policy sequence with the same
+minimum generation; renewal requires no image rebuild or measured release.
 
 List available hosts or use the organization default. Both AMD SEV-SNP and
 Intel TDX use the complete pinned offline verifier and the same measured
@@ -149,6 +151,10 @@ Use a stable configured gateway domain and route it to that instance. Its hostna
 must match the signed origin and backend setting before browsers connect.
 A Running instance or `/healthz` response is connectivity/readiness, not proof.
 The browser SDK and backend must independently accept fresh nonce-bound evidence.
+
+See [2026-10-07 staging qualification](qa-2026-10-07.md) for the actual AMD
+deployment and tested browser/inference scope. Those results do not qualify an
+Intel deployment or production promotion.
 
 ## Live acceptance
 
@@ -186,6 +192,8 @@ while its v3 endpoint returns `attestation_unavailable`: there is no code freshn
 witness. Publish the staging-suffixed gateway tag as a normal release and select
 it as latest when deploying this dedicated gateway staging repository. This does
 not promote platform/desktop `main` or select a Desktop update.
+Select the tag as latest before starting its new instance, after authenticating
+and publishing the signed deployment mapping and policy.
 
 Wait for the exact `tinfoil-deployment.json` digest to have a Sigstore freshness
 witness from `tinfoilsh/freshness-witness` and for v3 proof to verify. Do not bypass
