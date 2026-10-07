@@ -1,6 +1,7 @@
 mod attestation;
 mod service;
 mod transport;
+mod uploads;
 
 use anyhow::{Context, Result, ensure};
 use axiom_gateway_protocol::{SignedDocument, TrustPolicy, verify_document};
@@ -201,11 +202,19 @@ async fn run() -> Result<()> {
         collector: RwLock::new(collector),
         sessions: Mutex::new(BTreeMap::new()),
         active: Mutex::new(BTreeMap::new()),
+        uploads: Mutex::new(uploads::Uploads::default()),
         lease: Mutex::new(None),
         shutdown: shutdown.clone(),
     });
     // No listener until hardware/workload self-verification and attested backend admission pass.
     state.lease().await?;
+    let upload_state = Arc::clone(&state);
+    let upload_cleanup = tokio::spawn(async move {
+        loop {
+            tokio::select! { () = upload_state.shutdown.cancelled() => break, () = tokio::time::sleep(Duration::from_secs(10)) => {} }
+            upload_state.uploads.lock().await.prune(now());
+        }
+    });
     let refresh_state = Arc::clone(&state);
     let refresh = tokio::spawn(async move {
         let mut sequence = policy.sequence;
@@ -263,5 +272,6 @@ async fn run() -> Result<()> {
         .await?;
     shutdown.cancel();
     refresh.await?;
+    upload_cleanup.await?;
     Ok(())
 }

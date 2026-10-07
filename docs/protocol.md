@@ -44,7 +44,7 @@ account-specific; see [platform delegation](https://github.com/astrea-foundation
 | `GET /healthz` | Public readiness only, available after admission |
 | `POST /v1/attestation` | Public nonce-bound evidence |
 | `POST /v1/session` | One complete EHBP frame containing grant and P-256 DPoP |
-| `POST /v1/rpc` | One complete EHBP frame containing `models`, strict `infer`, or owned `cancel` |
+| `POST /v1/rpc` | One EHBP frame containing `models`, strict `infer`, owned `cancel`, or a bounded upload operation |
 
 EHBP uses its published X25519/HKDF-SHA256/AES-256-GCM suite and response exporter.
 `Axiom-Encapsulated-Key` and `Axiom-Response-Nonce` carry the normal EHBP values.
@@ -66,6 +66,36 @@ Fresh proof is required every 240 seconds; SDK refreshes it before new RPCs and
 requires reconnect after boot-key rotation. Gateway policy refresh failure
 cancels active work. Account/session quotas, body limits, cancellation and stream
 backpressure remain enforced.
+
+Inference emits an authenticated `accepted` event after validated admission and
+ownership registration. This acknowledges the user message, not a verified
+reply. Admitted request IDs cannot be reused in the same session. Cancellation
+is idempotent for that session's admitted requests when completion races the
+cancel; unknown or other-account targets still fail.
+
+## Original-file uploads
+
+SDK 0.2 adds `upload_begin`, `upload_chunk` and `upload_abort` through the same
+freshly attested EHBP/DPoP RPC. Begin binds the original byte length, SHA256,
+filename, MIME, kind, model and future inference request ID. Chunks contain at
+most 256 KiB of canonical base64-decoded bytes, require the exact next offset,
+and seal only at the declared length with a matching digest. Images retain the
+native 5 MiB limit; supported files retain 10 MiB. No extraction or OCR occurs.
+
+Handles bind account, browser session, model and request. `infer.uploads` binds
+each single-use sealed handle to a user-message index. Domain and provider
+capability validation remain authoritative. A handle cannot attach to another
+account/session/request/model, a non-user message or an expired session.
+Assembly remains in protected enclave memory, with 64 handles/64 MiB reserved
+per account and 256 MiB globally. Global reservations remain held during
+inference, not just upload assembly. Handles expire after at most five minutes
+or session expiry; a ten-second sweep drops expired buffers. Abort and shutdown
+also release reservations; original byte buffers are zeroized on drop.
+
+The browser stores original files inside its encrypted vault and uploads the
+required history files again for each new inference request. It never sends
+files to the ordinary account API or edge storage. Transport limits still apply
+to each RPC. Failed or unsupported uploads do not fall back to prompt text.
 
 Response frames bind protocol, request ID, ordered sequence, kind and data. Each
 frame is AEAD-authenticated. Deltas are provisional until encrypted terminal

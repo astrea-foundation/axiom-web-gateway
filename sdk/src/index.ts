@@ -121,7 +121,29 @@ export class GatewayClient {
       .setProtectedHeader({ typ: 'dpop+jwt', alg: 'ES256', jwk: publicKey }).sign(key);
   }
 
-  async rpc(operation: { op: 'models' } | { op: 'infer'; request: Record<string, unknown> } | { op: 'cancel'; target_request_id: string },
+  /** Upload original bytes through attested EHBP; handles bind the session, model and next request. */
+  async upload(input: { bytes: Uint8Array; targetRequestId: string; model: string; kind: 'image' | 'file'; name: string; mimeType: string }, signal?: AbortSignal): Promise<string> {
+    if (!input.bytes.length || input.bytes.length > (input.kind === 'image' ? 5 : 10) * 1024 * 1024) throw new Error('Attachment exceeds limit');
+    const options = signal ? { signal } : {};
+    try {
+      const result = await this.rpc({ op: 'upload_begin', upload: { target_request_id: input.targetRequestId, model: input.model, kind: input.kind, name: input.name, mime_type: input.mimeType, length: input.bytes.length, sha256: hex(sha256(input.bytes)) } }, undefined, options) as { upload_id?: string };
+      if (!/^[0-9a-f]{32}$/.test(result.upload_id ?? '')) throw new Error('Invalid upload handle');
+      const uploadId = result.upload_id!;
+      for (let offset = 0; offset < input.bytes.length; offset += 256 * 1024) {
+        const bytes = input.bytes.subarray(offset, offset + 256 * 1024);
+        let binary = '';
+        for (let at = 0; at < bytes.length; at += 16384) binary += String.fromCharCode(...bytes.subarray(at, at + 16384));
+        await this.rpc({ op: 'upload_chunk', upload_id: uploadId, offset, data: btoa(binary), final_chunk: offset + bytes.length === input.bytes.length }, undefined, options);
+      }
+      return uploadId;
+    } catch (error) {
+      await this.rpc({ op: 'upload_abort', target_request_id: input.targetRequestId }).catch(() => {});
+      throw error;
+    }
+  }
+  async rpc(operation: { op: 'models' } | { op: 'infer'; request: Record<string, unknown>; uploads?: Array<{ upload_id: string; message_index: number }> } | { op: 'cancel'; target_request_id: string }
+    | { op: 'upload_begin'; upload: { target_request_id: string; model: string; kind: 'image' | 'file'; name: string; mime_type: string; length: number; sha256: string } }
+    | { op: 'upload_chunk'; upload_id: string; offset: number; data: string; final_chunk: boolean } | { op: 'upload_abort'; target_request_id: string },
     onProvisional: (frame: Frame) => void = () => {}, options: { signal?: AbortSignal; requestId?: string } = {}): Promise<unknown> {
     if (this.expires <= now() || this.proof.policy_expires_at <= now()) throw new Error('Gateway session expired');
     if (this.proof.evidence_expires_at <= now() + 30) {
