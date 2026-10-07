@@ -41,6 +41,10 @@ class DeploymentTests(unittest.TestCase):
             self.assertNotIn("secrets", container)
             self.assertEqual(set(container["keys"]), {"axiom-encryption", "axiom-authorization"})
             self.assertEqual(config["networks"]["verification"]["egress"], "allowlist")
+            # The pinned Rust verifier obtains signed release evidence and
+            # AMD certificates through these public proxies before inference.
+            self.assertTrue({"github-proxy.tinfoil.sh", "kds-proxy.tinfoil.sh"}
+                            <= set(config["networks"]["verification"]["allow"]))
             runtime = json.loads(container["env"][0]["AXIOM_GATEWAY_CONFIG_JSON"])
             self.assertEqual(runtime["publisher_key"], "34" * 32)
             self.assertEqual(runtime["public_origin"], "https://gateway.example")

@@ -63,6 +63,10 @@ Only it receives `/tinfoil/attestation.sock` and its two read-only key mounts.
 Runtime configuration is a measured environment value. Egress is allowlisted to
 the configured platform and public provenance/collateral endpoints. Reassess the
 list on upstream dependency changes; never switch it to open to mask failures.
+The pinned Tinfoil Rust verifier uses `github-proxy.tinfoil.sh` for public release
+evidence and `kds-proxy.tinfoil.sh` for AMD certificates. Both must be reachable;
+direct GitHub/AMD hosts do not replace these configured proxy destinations.
+Inference ciphertext continues through the account-scoped platform relay.
 The shim forwards only readiness, evidence, session and RPC paths and configured
 browser origins. The Rust listener is opened only after self-verification and
 backend admission, not merely when the container starts.
