@@ -76,8 +76,10 @@ organization admin key. Keep that key in the protected CLI credential file. The
 organization must have the Containers product enabled before creating instances.
 Connect the Tinfoil GitHub App to this repository. Commit the generated root
 configuration through a `dev` PR and dispatch its measured release workflow.
-Staging tags are distinct prereleases and never become the latest production
-release:
+Staging tags keep the `-staging.N` suffix and staging-only runtime settings.
+They must be eligible for GitHub latest in this dedicated gateway repository
+so Tinfoil can publish freshness witnesses. They are unrelated to Desktop
+releases or platform production promotion:
 
 ```sh
 tinfoil repo build run astrea-foundation/axiom-web-gateway --version v0.0.1-staging.1
@@ -187,3 +189,8 @@ freshness, supply a replacement signer or fall back to the unversioned v2 docume
 A successful VM boot or legacy quote alone cannot qualify the application.
 
 See the [official witness control-plane contract](https://github.com/tinfoilsh/freshness-witness).
+
+The gateway closes the verifier stdin descriptor before awaiting output. A
+process-framing regression checks EOF delivery; it does not mock live hardware
+qualification. Backend runtime roles also need the documented gateway table
+grants before admission can succeed.

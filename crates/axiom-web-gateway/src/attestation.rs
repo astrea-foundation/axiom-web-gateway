@@ -140,31 +140,7 @@ impl Collector {
         };
         let raw = serde_json::to_vec(&serde_json::json!({"evidence":evidence,"context":context}))?;
         ensure!(raw.len() <= MAX_EVIDENCE_BYTES, "attestation exceeds limit");
-        let mut child = Command::new(&self.verifier)
-            .kill_on_drop(true)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()?;
-        let mut stdin = child.stdin.take().context("verifier input unavailable")?;
-        let mut stdout = child.stdout.take().context("verifier output unavailable")?;
-        let verified = tokio::time::timeout(Duration::from_secs(20), async {
-            let writer = async {
-                stdin.write_all(&raw).await?;
-                stdin.shutdown().await?;
-                Ok::<_, anyhow::Error>(())
-            };
-            let reader = async {
-                let mut out = Vec::new();
-                (&mut stdout).take(16385).read_to_end(&mut out).await?;
-                ensure!(out.len() <= 16384, "verifier output exceeds limit");
-                Ok::<_, anyhow::Error>(out)
-            };
-            let ((), out) = tokio::try_join!(writer, reader)?;
-            ensure!(child.wait().await?.success(), "gateway evidence rejected");
-            serde_json::from_slice::<VerifiedGateway>(&out).context("invalid verifier output")
-        })
-        .await??;
+        let verified = verify_process(&self.verifier, &raw).await?;
         ensure!(
             self.is_fresh()
                 && verified.encryption_key == self.encryption_key
@@ -175,6 +151,37 @@ impl Collector {
         );
         Ok(evidence)
     }
+}
+
+async fn verify_process(verifier: &str, raw: &[u8]) -> Result<VerifiedGateway> {
+    let mut child = Command::new(verifier)
+        .kill_on_drop(true)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    let mut stdin = child.stdin.take().context("verifier input unavailable")?;
+    let mut stdout = child.stdout.take().context("verifier output unavailable")?;
+    tokio::time::timeout(Duration::from_secs(20), async {
+        let writer = async {
+            stdin.write_all(raw).await?;
+            stdin.shutdown().await?;
+            // ChildStdin shutdown does not close the Unix pipe. The verifier
+            // reads through EOF; release the descriptor before awaiting it.
+            drop(stdin);
+            Ok::<_, anyhow::Error>(())
+        };
+        let reader = async {
+            let mut out = Vec::new();
+            (&mut stdout).take(16385).read_to_end(&mut out).await?;
+            ensure!(out.len() <= 16384, "verifier output exceeds limit");
+            Ok::<_, anyhow::Error>(out)
+        };
+        let ((), out) = tokio::try_join!(writer, reader)?;
+        ensure!(child.wait().await?.success(), "gateway evidence rejected");
+        serde_json::from_slice::<VerifiedGateway>(&out).context("invalid verifier output")
+    })
+    .await?
 }
 
 #[cfg(test)]
@@ -213,6 +220,26 @@ mod tests {
         server.await.unwrap();
         std::fs::remove_file(path)?;
         result
+    }
+    #[tokio::test]
+    async fn verifier_receives_eof_before_waiting_for_its_output() {
+        // cat exercises process framing only; this is not hardware acceptance.
+        let raw = serde_json::to_vec(&serde_json::json!({
+            "encryption_key":"public-fixture", "authorization_key":"public-fixture",
+            "origin":"https://fixture.example", "image_digest":"fixture",
+            "source_repository":"fixture", "source_revision":"fixture",
+            "config_repository":"fixture", "config_digest":"fixture",
+            "generation":2, "policy_sequence":1,
+            "policy_expires_at":1, "evidence_expires_at":1
+        }))
+        .unwrap();
+        let verified =
+            tokio::time::timeout(Duration::from_secs(2), verify_process("/bin/cat", &raw))
+                .await
+                .expect("verifier input remained open")
+                .unwrap();
+        assert_eq!(verified.policy_sequence, 1);
+        assert!(verify_process("/bin/false", &raw).await.is_err());
     }
     #[tokio::test]
     async fn local_socket_receives_only_nonce_and_rejects_http_failures() {
