@@ -1,5 +1,8 @@
 # Tinfoil staging preparation, 2026-10-06
 
+This is a preparation snapshot. See [2026-10-07 qualification](qa-2026-10-07.md)
+for the deployed instance, resolved gates and current testing scope.
+
 The gateway repository is public with the user's authorization. Source, the
 root measured configuration and Tinfoil release workflows all live in
 `astrea-foundation/axiom-web-gateway`. No separate configuration repository,
