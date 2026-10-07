@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Generate a public config-only Tinfoil project. Never publish or create instances."""
+"""Generate measured Tinfoil configuration for this repository; deploy nothing."""
 import argparse
 import json
 from pathlib import Path
 import re
-import shutil
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,10 +62,6 @@ def prepare(args):
     output.mkdir(parents=True, exist_ok=True)
     # JSON is a strict YAML subset, accepted by the canonical Tinfoil parser.
     (output / "tinfoil-config.yml").write_text(json.dumps(config, indent=2) + "\n")
-    workflows = output / ".github/workflows"
-    workflows.mkdir(parents=True, exist_ok=True)
-    for path in (ROOT / "deploy/tinfoil/config-repo/.github/workflows").glob("*.yml"):
-        shutil.copyfile(path, workflows / path.name)
     return config
 
 

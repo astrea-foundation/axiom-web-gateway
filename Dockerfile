@@ -10,7 +10,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /axiom-gateway-verify .
 FROM docker.io/library/rust@sha256:618466f4caae45cd6b7b6adfa98764ad462aacf67e7149c6d277c625da9f1282 AS build
 RUN apt-get update && apt-get install -y --no-install-recommends cmake make perl pkg-config && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
-# Private dependencies are vendored on the authenticated host. No GitHub token
+# Locked dependencies are vendored on the build host. No GitHub token
 # or neighboring checkout is sent as a build argument or included in the image.
 COPY out/vendor /vendor
 COPY out/vendor-config.toml /build/.cargo/config.toml

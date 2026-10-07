@@ -2,10 +2,10 @@
 
 The implemented target is a non-debug, CPU-only Intel TDX Tinfoil Container using
 CVM 0.14.13 or a subsequently qualified version with nonce-bound v3 local
-attestation and boot key grants. Source and image can stay private. Tinfoil needs
-a public config-only GitHub project with its measured release evidence; do not
-publish the private application repository. Private registry pulls may require
-your organization's Containers/enterprise entitlement.
+attestation and boot key grants. The public `astrea-foundation/axiom-web-gateway`
+repository owns source, root `tinfoil-config.yml` and both measured release
+workflows. No second configuration repository is needed. Credentials and
+publisher private keys remain outside Git.
 
 ## Build and prepare
 
@@ -14,22 +14,24 @@ Build from a clean committed revision locally or in an authorized development ru
 ```sh
 sh scripts/build-container.sh
 podman tag axiom-web-gateway:dev ghcr.io/astrea-foundation/axiom-web-gateway:dev
-# Authenticate to the private registry, then push the immutable build.
+# Authenticate to the registry, then push the immutable build.
 podman push ghcr.io/astrea-foundation/axiom-web-gateway:dev
 ```
 
 Alternatively, manually dispatch `container-artifacts.yml` on `dev` to build
-private GHCR runtime/verifier images and a downloadable build record/browser SDK.
-It has no push/schedule trigger and deploys nothing. Keep both GHCR packages
-private and grant the Tinfoil organization registry access. Production artifacts
-must use an explicitly promoted `main` revision. This workflow avoids requiring
-GitHub Enterprise private-repository attestations: Axiom's offline release
-authority signs the trusted build record, while Tinfoil's public config workflow
-provides its independently verified Sigstore measurement evidence.
+GHCR runtime/verifier images, immutable pushed digests, a build record and browser
+SDK. It has no push/schedule trigger and deploys nothing. Set the two packages
+to Public in their GitHub package settings once, then confirm an anonymous digest
+pull before releasing configuration; public repository visibility does not make
+GHCR packages public automatically. Production artifacts must use an explicitly
+promoted `main` revision. Axiom's offline release authority signs the trusted
+build record; the same repository's Tinfoil workflow provides independently
+verified Sigstore measurement evidence.
 
 Use the pushed manifest digest, independently pinned publisher key and staging
-origins. Generation creates a complete config-only directory and two pinned
-Tinfoil release workflows, without publishing or creating cloud resources:
+origins. Generate the measured config into this checkout. The two pinned release
+workflows already live in `.github/workflows`; generation publishes nothing and
+creates no cloud resources:
 
 ```sh
 python3 scripts/prepare-tinfoil.py \
@@ -39,17 +41,17 @@ python3 scripts/prepare-tinfoil.py \
   --backend-origin https://api-staging.example \
   --browser-origin https://app-staging.example \
   --publisher-key PINNED_PUBLIC_KEY_HEX \
-  --output out/tinfoil-config
+  --output .
 ```
 
-`deploy/tinfoil/config-repo/tinfoil-config.example.yml` has dummy image/key values
+`deploy/tinfoil/tinfoil-config.example.yml` has dummy image/key values
 for schema tests and must not be deployed. The generator rejects mutable image
 tags, invalid keys and noncanonical origins. Validate the generated file with
 Tinfoil's canonical parser, pinned to the reviewed schema revision:
 
 ```sh
 go run github.com/tinfoilsh/tinfoil-config/cmd/tinfoil-config@70d5811ce0f931e4c9a0605a0c479eba94001c74 \
-  out/tinfoil-config/tinfoil-config.yml
+  tinfoil-config.yml
 ```
 
 The single container runs as 10001:10001 with a read-only filesystem, no public
@@ -66,24 +68,30 @@ backend admission, not merely when the container starts.
 
 Before creating anything, install the current Tinfoil CLI, run `tinfoil login`
 with the organization admin key interactively and confirm `tinfoil whoami`.
-Configure private-registry credentials in that organization. After authorized
-public config publication, connect the Tinfoil GitHub App to the config repository.
-Commit the generated files there and dispatch its release workflow:
+Google OAuth signs into the dashboard; CLI management needs a separately created
+organization admin key. Keep that key in the protected CLI credential file. The
+organization must have the Containers product enabled before creating instances.
+Connect the Tinfoil GitHub App to this repository. Commit the generated root
+configuration through a `dev` PR and dispatch its measured release workflow.
+Staging tags are distinct prereleases and never become the latest production
+release:
 
 ```sh
-tinfoil repo build run OWNER/axiom-web-gateway-config --version v0.0.1
-tinfoil repo build status OWNER/axiom-web-gateway-config --version v0.0.1
+tinfoil repo build run astrea-foundation/axiom-web-gateway --version v0.0.1-staging.1
+tinfoil repo build status astrea-foundation/axiom-web-gateway --version v0.0.1-staging.1
 ```
 
 Wait for both release workflows and the published `tinfoil-deployment.json`/
 `tinfoil.hash` assets, not just a queued build or tag. Download the artifact:
 
 ```sh
-gh release download v0.0.1 --repo OWNER/axiom-web-gateway-config \
+gh release download v0.0.1-staging.1 --repo astrea-foundation/axiom-web-gateway \
   --pattern tinfoil-deployment.json --dir out/tinfoil-release
 ```
 
-From the clean source revision used to build the image, sign Axiom's mapping and
+Check out the exact clean source revision in the build record before signing,
+even if a later config-only commit in this same repository selected the image.
+From that source revision, sign Axiom's mapping and
 short-lived policy using the separately managed offline Ed25519 authority. The offline publisher is a trusted release authority; keep its key separate from
 the builder and runtime. `out/build-record.json` records immutable image content
 IDs, clean source revision and lock/recipe hashes. Never accept a record from an
@@ -93,11 +101,11 @@ first verifies the GitHub/Sigstore release workflow identity:
 
 ```sh
 python3 scripts/publish-documents.py workload --key /protected/publisher.pem \
-  --config-repository OWNER/axiom-web-gateway-config --generation 1 \
+  --config-repository astrea-foundation/axiom-web-gateway --generation 1 \
   --deployment out/tinfoil-release/tinfoil-deployment.json \
   --build-record out/build-record.json --output out/documents
 python3 scripts/publish-documents.py policy --key /protected/publisher.pem \
-  --config-repository OWNER/axiom-web-gateway-config --generation 1 \
+  --config-repository astrea-foundation/axiom-web-gateway --generation 1 \
   --sequence 1 --output out/documents
 ```
 
@@ -118,7 +126,7 @@ explicitly non-debug staging instance using its published release:
 ```sh
 tinfoil container hosts
 tinfoil container create axiom-gateway-staging \
-  --repo OWNER/axiom-web-gateway-config --tag v0.0.1 --mark-latest=false \
+  --repo astrea-foundation/axiom-web-gateway --tag v0.0.1-staging.1 --mark-latest=false \
   --host INTEL_TDX_HOST --custom-domain gateway-staging.example
 tinfoil container get axiom-gateway-staging
 ```

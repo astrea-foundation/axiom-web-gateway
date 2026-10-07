@@ -33,7 +33,7 @@ about 36 MiB; this is a material initial-download cost, not a prompt transfer.
 Extensions may supply packaged WASM bytes and need normal module-worker/WASM CSP
 support. No remote executable imports or eval are required.
 
-Container builds vendor locked private Cargo dependencies on the authenticated
+Container builds vendor locked Cargo dependencies on the build
 host, then build offline. Go public dependencies use their lockfile. No GitHub
 credential is passed through build arguments or layers. Outputs:
 `axiom-web-gateway:dev`, `axiom-gateway-verifier:dev` and `out/build-record.json`. The latter contains a
@@ -49,8 +49,8 @@ with identical mandatory attestation checks.
 
 Development PRs target `dev`. CI runs required checks only and never deploys,
 bumps Desktop versions, or publishes installers. A separately dispatched
-`container-artifacts.yml` builds private images, a build record and browser SDK;
-it does not deploy or run on pushes. Production `main`, public source
-publication and production deployment require explicit authorization. The public
-config-only project uses Tinfoil's pinned, manually dispatched release workflows;
-that is separate from private application CI.
+`container-artifacts.yml` builds images, a build record and browser SDK; it does
+not deploy or run on pushes. This public repository also owns the root measured
+`tinfoil-config.yml` and Tinfoil's pinned, manually dispatched release workflows.
+Staging uses `dev` and distinct prerelease tags. Production `main` promotion and
+production deployment require explicit authorization.
