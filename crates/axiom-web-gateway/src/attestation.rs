@@ -109,6 +109,9 @@ impl Collector {
     pub fn is_fresh(&self) -> bool {
         self.collected_at.elapsed().as_secs() < 240 && crate::now() < self.expires_at
     }
+    pub fn policy_expires_at(&self) -> u64 {
+        self.expires_at
+    }
     pub async fn proof(self: &Arc<Self>, challenge: String) -> Result<AttestationEvidence> {
         let _permit = self
             .work_slots
