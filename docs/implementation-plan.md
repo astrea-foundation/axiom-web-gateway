@@ -1,5 +1,11 @@
 # Axiom Web Gateway implementation plan
 
+This is the Azure implementation baseline as of 2026-10-04. The active next-target
+plan is the [Tinfoil Containers migration](tinfoil-migration.md), dated
+2026-10-06. The Azure code remains present and unqualified; the migration plan
+replaces Azure qualification as the next milestone and carries forward the
+shared authorization, privacy and live-inference acceptance work below.
+
 ## Decision and current state
 
 Updated 2026-10-04. Target **Microsoft Azure with an Intel TDX confidential VM**.

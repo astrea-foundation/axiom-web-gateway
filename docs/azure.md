@@ -1,5 +1,9 @@
 # Azure appliance build and qualification
 
+This is the current, unqualified Azure implementation. The
+[Tinfoil migration plan](tinfoil-migration.md) defines the next deployment target;
+Azure qualification is no longer the next delivery milestone.
+
 ## Current qualification boundary
 
 Local tests establish protocol behavior, encrypted browser/Rust interoperability,

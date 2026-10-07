@@ -2,6 +2,10 @@
 
 ## Status and decision
 
+The next deployment target is specified in the
+[Tinfoil migration plan](tinfoil-migration.md). The following describes the
+current Azure implementation; runtime migration has not started.
+
 The gateway service, browser SDK, account delegation and measured appliance
 build tooling are implemented. The deployment remains unqualified until the
 actual Azure firmware/boot profile and live evidence chain have passed the

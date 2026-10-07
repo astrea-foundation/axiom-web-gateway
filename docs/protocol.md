@@ -1,5 +1,9 @@
 # Browser and gateway protocol
 
+This documents the implemented Azure v1 contract. The planned Tinfoil v2
+transport and evidence changes are in the [migration plan](tinfoil-migration.md);
+they are not supported by the current SDK or service.
+
 ## Trust and proof
 
 The installed client pins an Ed25519 build-publisher key and first-party HTTPS

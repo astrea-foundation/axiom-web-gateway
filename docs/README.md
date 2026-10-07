@@ -1,8 +1,10 @@
 # Documentation
 
+- [Tinfoil migration plan](tinfoil-migration.md): active plan for container
+  attestation, browser/backend changes, deployment and live qualification.
 - [Architecture and implementation stages](architecture.md): full gateway trust
   boundary, reused code, repository ownership and remaining implementation.
-- [Implementation plan](implementation-plan.md): Azure Intel TDX workload
+- [Azure implementation baseline](implementation-plan.md): Azure Intel TDX workload
   attestation, browser transport, account delegation and Docker qualification.
 - [Development](development.md): independent builds, shared dependency updates
   and the branch/release workflow.

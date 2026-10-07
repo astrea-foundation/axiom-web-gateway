@@ -12,6 +12,10 @@ gateway is deployed. **Azure firmware qualification and a live TDX test remain
 required before enabling this for users.** An ordinary machine cannot open the
 inference listener.
 
+The next deployment target is planned in the
+[Tinfoil Containers migration plan](docs/tinfoil-migration.md). The current
+implementation still requires Azure; the migration has not been implemented.
+
 ```sh
 cargo test --workspace --locked
 pnpm install --frozen-lockfile
