@@ -4,6 +4,7 @@ import { verifyGateway } from './verifier.js';
 import { SignJWT } from 'jose';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { PROTOCOL, readFrames, type Frame } from './frames.js';
+import { delegationDeadline } from './expiry.js';
 export { type Frame } from './frames.js';
 
 const encoder = new TextEncoder();
@@ -107,8 +108,9 @@ export class GatewayClient {
     GatewayClient.encrypted(response);
     const value = await boundedJson(response, 16_384);
     if (value.success !== true || value.data?.protocol !== PROTOCOL || !/^[0-9a-f]{64}$/.test(value.data?.session_id) ||
-        !Number.isSafeInteger(value.data?.expires_at) || value.data.expires_at <= now() || value.data.expires_at > now() + 900) throw new Error('Gateway session rejected');
-    return new GatewayClient(options, proof, transport, keys.privateKey, publicKey, value.data.session_id, value.data.expires_at);
+        !Number.isSafeInteger(value.data?.expires_at)) throw new Error('Gateway session rejected');
+    const expires = delegationDeadline(value.data.expires_at, now(), 900);
+    return new GatewayClient(options, proof, transport, keys.privateKey, publicKey, value.data.session_id, expires);
   }
 
   private static encrypted(response: Response): void {

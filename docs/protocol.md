@@ -58,6 +58,10 @@ request frames, Authorization/Cookie headers and failed AEAD are rejected.
 The inner envelope binds protocol, session, DPoP and exact serialized payload.
 DPoP binds POST URI, token hash, accepted encryption key, payload hash, timestamp
 and one-use replay ID. Grants last 120 seconds; sessions at most 15 minutes.
+Absolute delegation expiries allow the verifier's 60-second clock tolerance,
+but are capped at the local 240-second admission or 900-second session deadline.
+Expired or excessively future claims are rejected; admission also ends at the
+locally verified policy expiry. Cryptographic freshness checks are unchanged.
 Fresh proof is required every 240 seconds; SDK refreshes it before new RPCs and
 requires reconnect after boot-key rotation. Gateway policy refresh failure
 cancels active work. Account/session quotas, body limits, cancellation and stream

@@ -59,6 +59,16 @@ pub struct Session {
     expires_at: u64,
     replays: Mutex<BTreeMap<String, u64>>,
 }
+
+// Match the verifier's clock tolerance, without extending a local lifetime.
+fn delegation_deadline(remote: u64, current: u64, lifetime: u64) -> Result<u64> {
+    let limit = current.checked_add(lifetime).context("invalid expiry")?;
+    ensure!(
+        remote > current && remote <= limit.saturating_add(60),
+        "invalid delegation expiry"
+    );
+    Ok(remote.min(limit))
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Envelope {
@@ -113,11 +123,14 @@ impl State {
             .as_str()
             .context("invalid gateway lease")?
             .to_owned();
-        let expires_at = value["expires_at"]
+        let remote_expiry = value["expires_at"]
             .as_u64()
             .context("invalid lease expiry")?;
+        let current = now();
+        let expires_at =
+            delegation_deadline(remote_expiry, current, 240)?.min(collector.policy_expires_at());
         ensure!(
-            token.starts_with("axl_") && expires_at > now() && expires_at <= now() + 240,
+            token.starts_with("axl_") && expires_at > current,
             "invalid gateway admission"
         );
         *lease = Some(Lease {
@@ -285,17 +298,15 @@ async fn session(
             .context("missing tenant authority")?
             .to_owned();
         let key: BrowserKey = serde_json::from_value(authority["browser_key"].clone())?;
-        let expires_at = authority["expires_at"]
+        let remote_expiry = authority["expires_at"]
             .as_u64()
             .context("invalid delegation expiry")?;
+        let expires_at = delegation_deadline(remote_expiry, now(), 900)?;
         let token = authority["relay_token"]
             .as_str()
             .context("missing relay authority")?;
         ensure!(
-            expires_at > now()
-                && expires_at <= now() + 900
-                && token.starts_with("axg_")
-                && account.len() == 64,
+            expires_at > now() && token.starts_with("axg_") && account.len() == 64,
             "invalid relay authority"
         );
         authorization::verify(
@@ -665,6 +676,15 @@ async fn forward(event: ProviderEvent, output: &mut Output, verified: &mut bool)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cross_clock_delegation_never_extends_the_local_lifetime() {
+        assert_eq!(delegation_deadline(1242, 1000, 240).unwrap(), 1240);
+        assert_eq!(delegation_deadline(1238, 1000, 240).unwrap(), 1238);
+        for expiry in [999, 1000, 1301, u64::MAX] {
+            assert!(delegation_deadline(expiry, 1000, 240).is_err());
+        }
+    }
     use hpke::{Deserializable as _, Serializable as _, kem::X25519HkdfSha256};
     use rand::{SeedableRng as _, rngs::StdRng};
 
