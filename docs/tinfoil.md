@@ -46,7 +46,10 @@ python3 scripts/prepare-tinfoil.py \
 
 `deploy/tinfoil/tinfoil-config.example.yml` has dummy image/key values
 for schema tests and must not be deployed. The generator rejects mutable image
-tags, invalid keys and noncanonical origins. Validate the generated file with
+tags, invalid keys and noncanonical origins. The measured release action is
+pinned to v0.13.2, which supports both boot key grants and container attestation
+access in the reviewed v0.1.14 configuration schema. Earlier v0.11.0 rejects
+this configuration and must not be used. Validate the generated file with
 Tinfoil's canonical parser, pinned to the reviewed schema revision:
 
 ```sh
