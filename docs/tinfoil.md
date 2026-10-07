@@ -134,7 +134,7 @@ explicitly non-debug staging instance using its published release:
 ```sh
 tinfoil container hosts
 tinfoil container create axiom-gateway-staging \
-  --repo astrea-foundation/axiom-web-gateway --tag v0.0.1-staging.1 --mark-latest=false \
+  --repo astrea-foundation/axiom-web-gateway --tag v0.0.1-staging.1 --mark-latest=true \
   --custom-domain gateway-staging.example
 tinfoil container get axiom-gateway-staging
 ```
@@ -169,3 +169,21 @@ Sources: [Tinfoil quickstart](https://docs.tinfoil.sh/containers/quickstart),
 [boot-key configuration](https://github.com/tinfoilsh/tinfoil-config),
 [offline verifier](https://github.com/tinfoilsh/tinfoil-go/tree/ef79d8ed92a4b5e669c71328caa2b4a9f7931d25/verify),
 [release template](https://github.com/tinfoilsh/tinfoil-containers-template/tree/0eddc320b8f328d7a3c057152596934444ac2d75).
+
+
+### Freshness witness publication
+
+Tinfoil's control plane discovers active configuration repositories and witnesses
+GitHub latest, refreshing it automatically. Non-latest releases are not renewed.
+A new repository containing only GitHub prereleases has no latest and can boot
+while its v3 endpoint returns `attestation_unavailable`: there is no code freshness
+witness. Publish the staging-suffixed gateway tag as a normal release and select
+it as latest when deploying this dedicated gateway staging repository. This does
+not promote platform/desktop `main` or select a Desktop update.
+
+Wait for the exact `tinfoil-deployment.json` digest to have a Sigstore freshness
+witness from `tinfoilsh/freshness-witness` and for v3 proof to verify. Do not bypass
+freshness, supply a replacement signer or fall back to the unversioned v2 document.
+A successful VM boot or legacy quote alone cannot qualify the application.
+
+See the [official witness control-plane contract](https://github.com/tinfoilsh/freshness-witness).
