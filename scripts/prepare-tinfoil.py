@@ -43,7 +43,8 @@ def prepare(args):
                    max_concurrency=args.concurrency, max_sessions=args.sessions)
     # Inference goes through the account-scoped ciphertext relay. These extra
     # public hosts supply upstream attestation/provenance and vendor collateral.
-    allow = sorted({urlsplit(args.backend_origin).hostname, "inference.tinfoil.sh", "api.github.com",
+    allow = sorted({urlsplit(args.backend_origin).hostname, "inference.tinfoil.sh",
+                    "github-proxy.tinfoil.sh", "kds-proxy.tinfoil.sh", "api.github.com",
                     "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com",
                     "raw.githubusercontent.com", "api.trustedservices.intel.com", "kdsintf.amd.com",
                     "rekor.sigstore.dev", "fulcio.sigstore.dev", "tuf-repo-cdn.sigstore.dev"})
