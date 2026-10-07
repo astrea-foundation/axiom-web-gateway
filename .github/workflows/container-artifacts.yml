@@ -28,7 +28,7 @@ jobs:
         env:
           CONTAINER_ENGINE: docker
         run: sh scripts/build-container.sh
-      - name: Publish private image artifacts
+      - name: Publish image artifacts
         env:
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REGISTRY_USER: ${{ github.actor }}
@@ -40,6 +40,8 @@ jobs:
           docker push "$IMAGE_PREFIX:build-$SOURCE_REVISION"
           docker tag axiom-gateway-verifier:dev "$IMAGE_PREFIX-verifier:build-$SOURCE_REVISION"
           docker push "$IMAGE_PREFIX-verifier:build-$SOURCE_REVISION"
+          docker image inspect "$IMAGE_PREFIX:build-$SOURCE_REVISION" --format '{{json .RepoDigests}}' > out/runtime-digests.json
+          docker image inspect "$IMAGE_PREFIX-verifier:build-$SOURCE_REVISION" --format '{{json .RepoDigests}}' > out/verifier-digests.json
       - name: Package browser SDK
         run: pnpm --dir sdk pack --out ../out/axiom-web-gateway-sdk.tgz
       - uses: actions/upload-artifact@v4
@@ -47,5 +49,7 @@ jobs:
           name: gateway-source-record-and-sdk
           path: |
             out/build-record.json
+            out/runtime-digests.json
+            out/verifier-digests.json
             out/axiom-web-gateway-sdk.tgz
           retention-days: 14

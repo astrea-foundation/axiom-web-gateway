@@ -32,7 +32,7 @@ jobs:
           go-version-file: verifier/go.mod
           cache-dependency-path: verifier/go.sum
       - run: cd verifier && go test ./... && go vet ./...
-      - run: go run github.com/tinfoilsh/tinfoil-config/cmd/tinfoil-config@70d5811ce0f931e4c9a0605a0c479eba94001c74 deploy/tinfoil/config-repo/tinfoil-config.example.yml
+      - run: go run github.com/tinfoilsh/tinfoil-config/cmd/tinfoil-config@70d5811ce0f931e4c9a0605a0c479eba94001c74 deploy/tinfoil/tinfoil-config.example.yml
       - run: pnpm build && pnpm typecheck && pnpm test
       - run: cargo test -p axiom-web-gateway --locked -- --ignored
       - run: python3 -m unittest discover -s scripts/tests && python3 -m py_compile scripts/prepare-tinfoil.py scripts/publish-documents.py scripts/record-build.py

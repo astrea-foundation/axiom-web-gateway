@@ -15,7 +15,7 @@ def digest(path):
 
 def recipe():
     value = hashlib.sha256()
-    files = subprocess.check_output(["git", "ls-files", "-z", "Dockerfile", ".dockerignore", "deploy/tinfoil", "scripts", ".github/workflows"], cwd=ROOT)
+    files = subprocess.check_output(["git", "ls-files", "-z", "Dockerfile", ".dockerignore", "tinfoil-config.yml", "deploy/tinfoil", "scripts", ".github/workflows"], cwd=ROOT)
     for name in files.split(b"\0"):
         if name and (ROOT / name.decode()).is_file():
             value.update(name + b"\0" + (ROOT / name.decode()).read_bytes())

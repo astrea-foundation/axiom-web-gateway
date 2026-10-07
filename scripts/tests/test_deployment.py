@@ -45,7 +45,7 @@ class DeploymentTests(unittest.TestCase):
             self.assertEqual(runtime["publisher_key"], "34" * 32)
             self.assertEqual(runtime["public_origin"], "https://gateway.example")
             self.assertEqual(runtime["attestation_socket"], "/tinfoil/attestation.sock")
-            self.assertTrue((Path(output) / ".github/workflows/tinfoil-release-publish.yml").is_file())
+            self.assertTrue((Path(output) / "tinfoil-config.yml").is_file())
 
     def test_configuration_rejects_mutable_images_and_bad_origins(self):
         with tempfile.TemporaryDirectory() as output:
