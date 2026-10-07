@@ -5,12 +5,12 @@ use aes_gcm::{
     aead::{Aead as _, KeyInit as _},
 };
 use anyhow::{Result, ensure};
+#[cfg(test)]
+use hpke::kem::Kem as _;
 use hpke::{
-    Deserializable as _, Serializable as _,
-    aead::AesGcm256,
-    kdf::HkdfSha256,
-    kem::{Kem as _, X25519HkdfSha256},
+    Deserializable as _, Serializable as _, aead::AesGcm256, kdf::HkdfSha256, kem::X25519HkdfSha256,
 };
+#[cfg(test)]
 use rand::{SeedableRng as _, rngs::StdRng};
 use zeroize::Zeroizing;
 
@@ -28,12 +28,38 @@ pub struct Reply {
 }
 
 impl Identity {
+    #[cfg(test)]
     pub fn generate() -> Self {
         let (private, public) = Kem::gen_keypair(&mut StdRng::from_os_rng());
         Self {
             private,
             public_hex: hex::encode(public.to_bytes()),
         }
+    }
+    /// Read only the boot-generated, attested X25519 key; never generate a
+    /// substitute if its mount is unavailable.
+    pub fn load(path: &std::path::Path) -> Result<Self> {
+        let pem = Zeroizing::new(std::fs::read_to_string(path)?);
+        ensure!(pem.len() <= 4096, "private key exceeds limit");
+        let (label, document) = pkcs8::SecretDocument::from_pem(&pem)?;
+        let info = pkcs8::PrivateKeyInfo::try_from(document.as_bytes())?;
+        ensure!(
+            label == "PRIVATE KEY"
+                && info.algorithm.oid == pkcs8::ObjectIdentifier::new_unwrap("1.3.101.110")
+                && info.algorithm.parameters.is_none()
+                && info.private_key.len() == 34
+                && info.private_key[..2] == [4, 32],
+            "invalid boot encryption key"
+        );
+        let key = x25519_dalek::StaticSecret::from(<[u8; 32]>::try_from(&info.private_key[2..])?);
+        let public = x25519_dalek::PublicKey::from(&key);
+        let raw = Zeroizing::new(key.to_bytes());
+        let private = <Kem as hpke::kem::Kem>::PrivateKey::from_bytes(raw.as_ref())
+            .map_err(|_| anyhow::anyhow!("invalid boot encryption key"))?;
+        Ok(Self {
+            private,
+            public_hex: hex::encode(public.as_bytes()),
+        })
     }
     /// Each RPC request is exactly one authenticated HPKE frame. Multiple or
     /// incomplete frames are rejected, preventing request truncation ambiguity.
@@ -148,6 +174,36 @@ mod tests {
         )
         .unwrap();
         assert!(child.wait().unwrap().success());
+    }
+
+    #[test]
+    fn boot_pkcs8_key_matches_external_spki_and_rejects_wrong_algorithm() {
+        let path = std::env::temp_dir().join(format!(
+            "axiom-boot-key-{}.pem",
+            hex::encode(rand::random::<[u8; 8]>())
+        ));
+        for algorithm in ["X25519", "ED25519"] {
+            let output = Command::new("openssl")
+                .args(["genpkey", "-algorithm", algorithm])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            std::fs::write(&path, &output.stdout).unwrap();
+            if algorithm == "X25519" {
+                let identity = Identity::load(&path).unwrap();
+                let public = Command::new("openssl")
+                    .args(["pkey", "-pubout", "-outform", "DER", "-in"])
+                    .arg(&path)
+                    .output()
+                    .unwrap();
+                assert!(public.status.success());
+                assert_eq!(public.stdout.len(), 44);
+                assert_eq!(identity.public_hex, hex::encode(&public.stdout[12..]));
+            } else {
+                assert!(Identity::load(&path).is_err());
+            }
+        }
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

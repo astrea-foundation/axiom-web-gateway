@@ -5,12 +5,6 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
-[lib]
-crate-type = ["rlib", "cdylib"]
-
-[features]
-browser = ["dep:wasm-bindgen", "dep:serde-wasm-bindgen", "dcap-qvl/js", "getrandom/js"]
-
 [dependencies]
 anyhow.workspace = true
 serde.workspace = true
@@ -19,13 +13,8 @@ sha2.workspace = true
 hex.workspace = true
 base64.workspace = true
 ed25519-dalek.workspace = true
-dcap-qvl.workspace = true
-rsa = { version = "0.9", default-features = false, features = ["std", "sha2"] }
 p256 = { version = "0.13", features = ["ecdsa"] }
 url = "2"
-getrandom = { version = "0.2", optional = true }
-wasm-bindgen = { version = "0.2", optional = true }
-serde-wasm-bindgen = { version = "0.6", optional = true }
 
 [lints]
 workspace = true

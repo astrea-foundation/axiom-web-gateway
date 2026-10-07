@@ -1,16 +1,12 @@
 # Documentation
 
-- [Tinfoil migration plan](tinfoil-migration.md): active plan for container
-  attestation, browser/backend changes, deployment and live qualification.
-- [Architecture and implementation stages](architecture.md): full gateway trust
-  boundary, reused code, repository ownership and remaining implementation.
-- [Azure implementation baseline](implementation-plan.md): Azure Intel TDX workload
-  attestation, browser transport, account delegation and Docker qualification.
-- [Development](development.md): independent builds, shared dependency updates
-  and the branch/release workflow.
-- [Browser protocol and SDK](protocol.md): local proof verification, encrypted
-  sessions, delegated authorization and authenticated stream completion.
-- [Azure appliance and qualification](azure.md): Docker/UKI builds, Secure Boot,
-  deployment templates and the outstanding live TDX checks.
-- [Local validation, 2026-10-04](qa-2026-10-04.md): implementation checks and
-  remaining live Azure qualification.
+- [Tinfoil deployment](tinfoil.md): container builds, config generation, signed
+  workload publication, staging admission and live qualification.
+- [Architecture](architecture.md): trust boundaries, source sharing and ownership.
+- [Development](development.md): independent builds, checks and branch workflow.
+- [Browser protocol and SDK](protocol.md): proof verification, encrypted sessions,
+  delegated authorization and authenticated stream completion.
+- [Tinfoil migration decision](tinfoil-migration.md): implemented changes and
+  remaining hosted qualification.
+- [Local Azure validation, 2026-10-04](qa-2026-10-04.md): historical evidence for
+  the retired Azure implementation; its results do not qualify Tinfoil.

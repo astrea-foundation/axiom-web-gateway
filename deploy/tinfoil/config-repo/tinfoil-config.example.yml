@@ -1,0 +1,75 @@
+{
+  "cvm-version": "0.14.13",
+  "cpus": 2,
+  "memory": 4096,
+  "networks": {
+    "verification": {
+      "egress": "allowlist",
+      "allow": [
+        "api.axiom.stream",
+        "api.github.com",
+        "api.trustedservices.intel.com",
+        "fulcio.sigstore.dev",
+        "github.com",
+        "inference.tinfoil.sh",
+        "kdsintf.amd.com",
+        "objects.githubusercontent.com",
+        "raw.githubusercontent.com",
+        "rekor.sigstore.dev",
+        "release-assets.githubusercontent.com",
+        "tuf-repo-cdn.sigstore.dev"
+      ]
+    }
+  },
+  "attested-keys": [
+    {
+      "id": "axiom-encryption",
+      "key": "x25519",
+      "uid": 10001,
+      "gid": 10001
+    },
+    {
+      "id": "axiom-authorization",
+      "key": "ed25519",
+      "uid": 10001,
+      "gid": 10001
+    }
+  ],
+  "containers": [
+    {
+      "name": "gateway",
+      "image": "ghcr.io/astrea-foundation/axiom-web-gateway@sha256:0000000000000000000000000000000000000000000000000000000000000001",
+      "user": "10001:10001",
+      "attestation": true,
+      "keys": [
+        "axiom-encryption",
+        "axiom-authorization"
+      ],
+      "read_only": true,
+      "networks": [
+        "verification"
+      ],
+      "restart": "on-failure",
+      "memory": "3072m",
+      "pids_limit": 128,
+      "env": [
+        {
+          "AXIOM_GATEWAY_CONFIG_JSON": "{\"listen\":\"0.0.0.0:8080\",\"public_origin\":\"https://gateway-dev.axiom.stream\",\"backend_origin\":\"https://api.axiom.stream\",\"publisher_key\":\"0000000000000000000000000000000000000000000000000000000000000002\",\"browser_origins\":[\"https://app.axiom.stream\"],\"max_concurrency\":32,\"max_sessions\":512,\"attestation_socket\":\"/tinfoil/attestation.sock\",\"encryption_key_path\":\"/run/tinfoil/keys/axiom-encryption/private_key.pem\",\"authorization_key_path\":\"/run/tinfoil/keys/axiom-authorization/private_key.pem\",\"verifier\":\"/usr/local/bin/axiom-gateway-verify\"}"
+        }
+      ]
+    }
+  ],
+  "shim": {
+    "upstream-port": 8080,
+    "upstream-container": "gateway",
+    "origins": [
+      "https://app.axiom.stream"
+    ],
+    "paths": [
+      "/healthz",
+      "/v1/attestation",
+      "/v1/session",
+      "/v1/rpc"
+    ]
+  }
+}

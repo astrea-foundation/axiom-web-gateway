@@ -1,32 +1,27 @@
 # Axiom Web Gateway
 
-A private development implementation of an encrypted browser gateway for an
-**Azure Intel TDX confidential VM**. The browser verifies the gateway workload
-and key; the gateway reuses Axiom's attested provider-E2EE client to verify,
-encrypt to and authenticate upstream model workers.
+A Rust gateway for **Tinfoil Containers on Intel TDX**. Browsers verify the
+measured gateway and its keys, encrypt to it, and receive authenticated streams.
+The gateway reuses Axiom's attested provider-E2EE client for upstream inference.
+The ordinary platform backend handles ciphertext, admission and account billing.
 
-Includes the Rust service, shared native/WebAssembly evidence verifier,
-TypeScript browser/extension SDK, Docker images and a measured UKI appliance
-builder. Backend account delegation lives in `axiom-platform`. No production
-gateway is deployed. **Azure firmware qualification and a live TDX test remain
-required before enabling this for users.** An ordinary machine cannot open the
-inference listener.
-
-The next deployment target is planned in the
-[Tinfoil Containers migration plan](docs/tinfoil-migration.md). The current
-implementation still requires Azure; the migration has not been implemented.
+Includes the Rust service, the same pinned Tinfoil verifier in native and browser
+WASM builds, a TypeScript SDK, Docker images and a config-only deployment generator.
+Azure dependencies and appliance tooling have been removed. Local checks and
+container builds pass; hosted Tinfoil qualification is still required. No
+production gateway has been deployed.
 
 ```sh
-cargo test --workspace --locked
 pnpm install --frozen-lockfile
-pnpm build
-pnpm test
+cargo test --workspace --locked
+pnpm build && pnpm test
+sh scripts/build-container.sh
 ```
 
-Provider implementation comes from commit-pinned `axiom-desktop` Cargo crates;
-there is no Desktop submodule or required neighboring checkout. See the
-[documentation index](docs/README.md) for setup, protocol and Azure qualification.
-Development targets `dev`. The repository remains private; production promotion,
-publication and deployment require explicit authorization.
+See [deployment](docs/tinfoil.md), [development](docs/development.md) and the
+[documentation index](docs/README.md). Provider crates are pinned Cargo Git
+dependencies; no Desktop submodule or neighboring checkout is required.
+Development targets `dev`. Source and images remain private during development;
+public config publication and production promotion require explicit authorization.
 
 Licensed under [Apache-2.0](LICENSE).

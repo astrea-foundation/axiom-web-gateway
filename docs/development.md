@@ -1,70 +1,56 @@
 # Development
 
-Use `~/sync2/work/axiom-web-gateway`. A clone builds independently from pinned
-public Cargo dependencies; no Desktop checkout or submodule is required. Rust
-1.90 or newer, Node 24 or newer, pnpm 11.22 and the matching wasm-bindgen CLI are
-required. Cargo.lock and pnpm-lock.yaml record dependencies. Azure SDK and all
-three shared Axiom crates are pinned by full Git revision.
+Use `~/sync2/work/axiom-web-gateway`. Required tools: Rust 1.90+, Go 1.27.1,
+Node 24+, pnpm 11.22, OpenSSL and Podman or Docker for packaging. `Cargo.lock`,
+`verifier/go.mod`, `verifier/go.sum` and `pnpm-lock.yaml` pin dependencies.
+No Desktop checkout is required. The official Tinfoil verifier is pinned to
+`ef79d8ed92a4b5e669c71328caa2b4a9f7931d25`; both upstream replacements in
+`go.mod` are required for its portable dependency graph.
 
 ```sh
-rustup target add wasm32-unknown-unknown
-cargo install wasm-bindgen-cli --version 0.2.127 --locked
 pnpm install --frozen-lockfile
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
+(cd verifier && go test ./... && go vet ./...)
+python3 -m unittest discover -s scripts/tests
+pnpm build && pnpm typecheck && pnpm test
 cargo test -p axiom-web-gateway --locked -- --ignored
-pnpm build
-pnpm typecheck
-pnpm test
-```
-
-The explicit ignored Rust test requires installed JavaScript dependencies and
-runs the published EHBP browser implementation against the Rust server
-composition. No network inference or plaintext listener is started by tests.
-The browser and native evidence verifiers use the same Rust source and Intel
-DCAP verification library. WASM is packaged with the SDK, never fetched from the
-attester. SDK integration is described in [protocol](protocol.md).
-
-## Containers
-
-```sh
 sh scripts/build-container.sh
 ```
 
-This uses Podman by default; set `CONTAINER_ENGINE=docker` for Docker. It vendors
-only Cargo.lock sources on the authenticated build host and rewrites vendor
-paths for the container. No GitHub credentials or neighboring checkout enter
-build arguments/layers. Outputs are local development images:
-`axiom-web-gateway:dev`, `axiom-gateway-verifier:dev` (static offline verifier),
-and `axiom-gateway-appliance-tools:dev`. OCI runtime bases are digest-pinned.
-The signed appliance includes the exact installed runtime libraries and kernel;
-APT package metadata must be retained for release provenance/qualification.
-This is not yet a claim of byte-for-byte reproducible package installation.
+The ignored interop test uses the published EHBP JavaScript implementation and
+our SDK transport against the Rust server composition. All fixtures are public
+synthetic data; tests introduce no plaintext inference listener. Policy tests
+inject hardware facts only into an unexported test helper. Production verifiers
+always use the official embedded trust roots and never conformance trust overrides.
 
-On an ordinary host the runtime fails before opening its listener: it requires
-Azure hardware/HCL/vTPM evidence, signed workload metadata, strict local
-verification and backend admission. Container configuration mounts are only for
-qualification diagnostics. Production uses baked configuration in the UKI;
-a host-mounted mutable config or a general-purpose Docker host is insufficient.
+`pnpm build` creates `out/axiom-gateway-verify`, the packaged WASM and its matching
+Go runtime, then SDK ESM/types. Browser verification runs in a module worker to
+avoid blocking chat rendering. Bundle the worker, `sdk/wasm` and SDK together;
+serve WASM compressed and cache immutable assets. The uncompressed module is
+about 36 MiB; this is a material initial-download cost, not a prompt transfer.
+Extensions may supply packaged WASM bytes and need normal module-worker/WASM CSP
+support. No remote executable imports or eval are required.
 
-## Shared code and branches
+Container builds vendor locked private Cargo dependencies on the authenticated
+host, then build offline. Go public dependencies use their lockfile. No GitHub
+credential is passed through build arguments or layers. Outputs:
+`axiom-web-gateway:dev`, `axiom-gateway-verifier:dev` and `out/build-record.json`. The latter contains a
+CGO-disabled static executable for independently built backend images.
+Runtime bases are digest-pinned. Package installation is not claimed to be
+byte-for-byte reproducible; the measured immutable image covers installed bytes.
 
-Make shared inference changes in `axiom-desktop` first, qualify them, then update
-all three shared Cargo revisions together. Do not commit machine-specific path
-patches. Production builds resolve the pinned remote revision.
+An ordinary host cannot open the gateway listener: it lacks fresh valid Tinfoil
+TDX evidence, granted keys, signed provenance and backend admission. There is no
+debug/plaintext fallback. Measured Tinfoil config supplies
+`AXIOM_GATEWAY_CONFIG_JSON`; a CLI JSON path is also accepted for diagnostics,
+with identical mandatory attestation checks.
 
-Push development to `dev`; feature PRs target `dev`. CI performs required checks
-only, with concurrency cancellation. It never deploys or publishes installers.
-Production `main`, release artifacts and public repository visibility require
-explicit authorization. Gateway testing never bumps Desktop versions.
-
-## Backend integration
-
-The separate platform feature implements database-backed grants, attested
-admission and limited relay credentials. See
-[the platform contract](https://github.com/astrea-foundation/axiom-platform/blob/dev/docs/api/web-gateway.md).
-Install the static verifier artifact into the platform image using its optional
-`backend/Dockerfile.web-gateway` variant. Gateway and backend remain independently
-buildable; the integration boundary is a versioned executable/OCI artifact and
-HTTP contracts, never sibling source imports.
+Development PRs target `dev`. CI runs required checks only and never deploys,
+bumps Desktop versions, or publishes installers. A separately dispatched
+`container-artifacts.yml` builds private images, a build record and browser SDK;
+it does not deploy or run on pushes. Production `main`, public source
+publication and production deployment require explicit authorization. The public
+config-only project uses Tinfoil's pinned, manually dispatched release workflows;
+that is separate from private application CI.

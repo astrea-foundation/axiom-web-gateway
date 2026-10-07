@@ -1,6 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 
-export const PROTOCOL = 'axiom-gateway-v1';
+export const PROTOCOL = 'axiom-gateway-v2';
 const MAX_FRAME = 1024 * 1024;
 const MAX_RESPONSE = 16 * 1024 * 1024;
 const hex = (bytes: Uint8Array) => Array.from(bytes, v => v.toString(16).padStart(2, '0')).join('');

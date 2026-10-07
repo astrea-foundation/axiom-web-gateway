@@ -1,6 +1,7 @@
 use super::*;
 use ed25519_dalek::{Signer as _, SigningKey};
 use p256::ecdsa::SigningKey as BrowserSigningKey;
+use sha2::{Digest as _, Sha256};
 
 #[test]
 fn signed_provenance_is_domain_separated_and_exact() {
@@ -9,17 +10,17 @@ fn signed_provenance_is_domain_separated_and_exact() {
     let document = SignedDocument {
         payload: URL_SAFE_NO_PAD.encode(raw),
         signature: hex::encode(
-            key.sign(&[b"axiom-gateway-workload-v1\0".as_slice(), raw].concat())
+            key.sign(&[b"axiom-gateway-workload-v2\0".as_slice(), raw].concat())
                 .to_bytes(),
         ),
     };
     let public = hex::encode(key.verifying_key().as_bytes());
     assert!(
-        verify_document::<serde_json::Value>(&document, &public, "axiom-gateway-workload-v1")
+        verify_document::<serde_json::Value>(&document, &public, "axiom-gateway-workload-v2")
             .is_ok()
     );
     assert!(
-        verify_document::<serde_json::Value>(&document, &public, "axiom-gateway-policy-v1")
+        verify_document::<serde_json::Value>(&document, &public, "axiom-gateway-policy-v2")
             .is_err()
     );
     let modified = SignedDocument {
@@ -27,24 +28,9 @@ fn signed_provenance_is_domain_separated_and_exact() {
         ..document
     };
     assert!(
-        verify_document::<serde_json::Value>(&modified, &public, "axiom-gateway-workload-v1")
+        verify_document::<serde_json::Value>(&modified, &public, "axiom-gateway-workload-v2")
             .is_err()
     );
-}
-
-#[test]
-fn evidence_nonce_binds_both_keys_and_origin() {
-    let parts = ["01".repeat(32), "02".repeat(32), "03".repeat(32)];
-    let original = binding(&parts[0], "https://gateway.example", &parts[1], &parts[2]).unwrap();
-    assert_ne!(
-        original,
-        binding(&parts[0], "https://other.example", &parts[1], &parts[2]).unwrap()
-    );
-    assert_ne!(
-        original,
-        binding(&parts[0], "https://gateway.example", &parts[2], &parts[1]).unwrap()
-    );
-    assert!(binding("01", "https://gateway.example", &parts[1], &parts[2]).is_err());
 }
 
 #[test]

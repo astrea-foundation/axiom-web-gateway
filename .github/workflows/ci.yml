@@ -21,14 +21,18 @@ jobs:
       - run: corepack enable && corepack prepare pnpm@11.22.0 --activate
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: pnpm install --frozen-lockfile
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
-      - run: cargo test -p axiom-web-gateway --locked -- --ignored
-      - run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: verifier/go.mod
+          cache-dependency-path: verifier/go.sum
+      - run: cd verifier && go test ./... && go vet ./...
+      - run: go run github.com/tinfoilsh/tinfoil-config/cmd/tinfoil-config@70d5811ce0f931e4c9a0605a0c479eba94001c74 deploy/tinfoil/config-repo/tinfoil-config.example.yml
       - run: pnpm build && pnpm typecheck && pnpm test
-      - run: python3 -m py_compile deploy/appliance/build.py scripts/publish-documents.py
+      - run: cargo test -p axiom-web-gateway --locked -- --ignored
+      - run: python3 -m unittest discover -s scripts/tests && python3 -m py_compile scripts/prepare-tinfoil.py scripts/publish-documents.py scripts/record-build.py

@@ -1,6 +1,7 @@
-import { Identity, Transport } from 'ehbp';
+import { Identity } from 'ehbp';
+import { GatewayTransport } from './transport.js';
+import { verifyGateway } from './verifier.js';
 import { SignJWT } from 'jose';
-import initVerifier, { verify_gateway } from '../wasm/axiom_gateway_protocol.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { PROTOCOL, readFrames, type Frame } from './frames.js';
 export { type Frame } from './frames.js';
@@ -36,7 +37,8 @@ async function boundedJson(response: Response, limit: number): Promise<any> {
 export interface VerifiedGateway {
   encryption_key: string; authorization_key: string; origin: string; image_digest: string;
   source_repository: string; source_revision: string; generation: number;
-  policy_sequence: number; policy_expires_at: number;
+  policy_sequence: number; policy_expires_at: number; evidence_expires_at: number;
+  config_repository: string; config_digest: string;
 }
 export interface GatewayOptions {
   /** Installed application's pinned build publisher key, never supplied by the attester. */
@@ -52,21 +54,9 @@ export interface GatewayOptions {
   verifierWasm?: BufferSource;
 }
 
-export class GatewayClient {
-  readonly proof: VerifiedGateway;
-  private constructor(
-    private readonly options: GatewayOptions, proof: VerifiedGateway,
-    private readonly transport: Transport, private readonly key: CryptoKey,
-    private readonly publicKey: JsonWebKey, private readonly session: string,
-    private readonly expires: number,
-  ) { this.proof = proof; }
-
-  static async connect(options: GatewayOptions, signal?: AbortSignal): Promise<GatewayClient> {
-    origin(options.gatewayOrigin); origin(options.backendOrigin);
-    if (!/^[0-9a-f]{64}$/.test(options.publisherKey)) throw new Error('Invalid pinned publisher key');
-    await initVerifier(options.verifierWasm ? { module_or_path: options.verifierWasm } : undefined);
+async function attest(options: GatewayOptions, signal?: AbortSignal, minimumSequence = options.minimumPolicySequence ?? 0): Promise<VerifiedGateway> {
+  const deadline = AbortSignal.any([AbortSignal.timeout(60_000), ...(signal ? [signal] : [])]);
     const challenge = random(32);
-    const deadline = AbortSignal.any([AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]);
     const common: RequestInit = { credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'error', signal: deadline };
     const [evidence, policy] = await Promise.all([
       fetch(options.gatewayOrigin + '/v1/attestation', { ...common, method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ challenge }) }).then(r => boundedJson(r, 8 * 1024 * 1024)),
@@ -74,18 +64,35 @@ export class GatewayClient {
     ]);
     // Current policy comes from the relying application's backend, not the attester.
     evidence.policy = policy;
-    const proof = JSON.parse(verify_gateway(JSON.stringify(evidence), JSON.stringify({
+    const proof = JSON.parse(await verifyGateway(evidence, {
       challenge, origin: options.gatewayOrigin, publisher_key: options.publisherKey,
-      now: now(), minimum_policy_sequence: options.minimumPolicySequence ?? 0,
-    }))) as VerifiedGateway;
+      now: now(), minimum_policy_sequence: minimumSequence,
+    }, options.verifierWasm)) as VerifiedGateway;
     options.rememberPolicySequence?.(proof.policy_sequence);
+  return proof;
+}
+
+export class GatewayClient {
+  readonly proof: VerifiedGateway;
+  private constructor(
+    private readonly options: GatewayOptions, proof: VerifiedGateway,
+    private readonly transport: GatewayTransport, private readonly key: CryptoKey,
+    private readonly publicKey: JsonWebKey, private readonly session: string,
+    private readonly expires: number,
+  ) { this.proof = proof; }
+
+  static async connect(options: GatewayOptions, signal?: AbortSignal): Promise<GatewayClient> {
+    origin(options.gatewayOrigin); origin(options.backendOrigin);
+    if (!/^[0-9a-f]{64}$/.test(options.publisherKey)) throw new Error('Invalid pinned publisher key');
+    const deadline = AbortSignal.any([AbortSignal.timeout(60_000), ...(signal ? [signal] : [])]);
+    const proof = await attest(options, deadline);
     const configuration = new Uint8Array(41);
     configuration.set([0, 0, 32]);
     configuration.set(Uint8Array.from(proof.encryption_key.match(/../g)!, h => parseInt(h, 16)), 3);
     configuration.set([0, 4, 0, 1, 0, 2], 35);
     // Only a locally verified key reaches the upstream EHBP implementation.
     const identity = await Identity.unmarshalPublicConfig(configuration);
-    const transport = new Transport(identity, new URL(options.gatewayOrigin).host);
+    const transport = new GatewayTransport(identity, options.gatewayOrigin);
     const keys = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']);
     const exported = await crypto.subtle.exportKey('jwk', keys.publicKey);
     const publicKey: JsonWebKey = { kty: 'EC', crv: 'P-256', x: exported.x!, y: exported.y! };
@@ -115,6 +122,11 @@ export class GatewayClient {
   async rpc(operation: { op: 'models' } | { op: 'infer'; request: Record<string, unknown> } | { op: 'cancel'; target_request_id: string },
     onProvisional: (frame: Frame) => void = () => {}, options: { signal?: AbortSignal; requestId?: string } = {}): Promise<unknown> {
     if (this.expires <= now() || this.proof.policy_expires_at <= now()) throw new Error('Gateway session expired');
+    if (this.proof.evidence_expires_at <= now() + 30) {
+      const fresh = await attest(this.options, options.signal, this.proof.policy_sequence);
+      if (fresh.encryption_key !== this.proof.encryption_key || fresh.authorization_key !== this.proof.authorization_key) throw new Error('Gateway restarted; reconnect required');
+      Object.assign(this.proof, fresh);
+    }
     const requestId = options.requestId ?? random(16);
     if (!/^[0-9a-f]{32}$/.test(requestId)) throw new Error('Invalid request identity');
     const payload = JSON.stringify({ request_id: requestId, ...operation });
