@@ -234,7 +234,7 @@ dependencies = [
 [[package]]
 name = "axiom-inference"
 version = "0.1.0"
-source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=8c4cb115f3b7fdcf5ca13d6c41efc1459c6b9fad#8c4cb115f3b7fdcf5ca13d6c41efc1459c6b9fad"
+source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=2b9a77bdb828afed5d8f3f522ff6f5df57e01462#2b9a77bdb828afed5d8f3f522ff6f5df57e01462"
 dependencies = [
  "base64 0.22.1",
  "schemars",
@@ -245,7 +245,7 @@ dependencies = [
 [[package]]
 name = "axiom-openai-compat"
 version = "0.1.0"
-source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=8c4cb115f3b7fdcf5ca13d6c41efc1459c6b9fad#8c4cb115f3b7fdcf5ca13d6c41efc1459c6b9fad"
+source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=2b9a77bdb828afed5d8f3f522ff6f5df57e01462#2b9a77bdb828afed5d8f3f522ff6f5df57e01462"
 dependencies = [
  "axiom-inference",
  "serde",
@@ -256,7 +256,7 @@ dependencies = [
 [[package]]
 name = "axiom-secure-client"
 version = "0.1.0"
-source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=8c4cb115f3b7fdcf5ca13d6c41efc1459c6b9fad#8c4cb115f3b7fdcf5ca13d6c41efc1459c6b9fad"
+source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=2b9a77bdb828afed5d8f3f522ff6f5df57e01462#2b9a77bdb828afed5d8f3f522ff6f5df57e01462"
 dependencies = [
  "anyhow",
  "async-trait",
