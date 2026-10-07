@@ -74,6 +74,13 @@ then EOF confirms no suffix/truncated AEAD frame. A missing terminal, provider
 failure, cancellation, reordered frames, digest substitution or AEAD failure
 cannot produce success or a persisted verified response.
 
+The gateway requires both the shared client's `ResponseVerified` event and a
+successful `VerifiedSession::stream` return. Tinfoil emits that event only after
+ordered EHBP authentication, its authenticated terminal fields and matching final
+accounting have passed. A successful native result without this event cannot
+authorize a gateway completion; all shared dependency pins must include the
+adapter's completion notification.
+
 ## SDK use
 
 ```ts
