@@ -8,5 +8,7 @@
   delegated authorization and authenticated stream completion.
 - [Tinfoil migration decision](tinfoil-migration.md): implemented changes and
   remaining hosted qualification.
+- [Staging preparation, 2026-10-06](staging-preparation-2026-10-06.md): published
+  immutable artifacts, selected configuration and remaining deployment gates.
 - [Local Azure validation, 2026-10-04](qa-2026-10-04.md): historical evidence for
   the retired Azure implementation; its results do not qualify Tinfoil.
