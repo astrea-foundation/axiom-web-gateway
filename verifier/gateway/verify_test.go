@@ -8,6 +8,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	sevabi "github.com/tinfoilsh/go-sev-guest/abi"
+	sevp "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
 	"github.com/tinfoilsh/tinfoil-go/document"
 	"github.com/tinfoilsh/tinfoil-go/verify"
 	"github.com/tinfoilsh/tinfoil-go/verify/measurement"
@@ -50,34 +52,62 @@ func TestPolicyKeyAndMeasurementBindings(t *testing.T) {
 			m.Registers = []string{"wrong"}
 			f.CodeMeasurement = &m
 		},
-		"snp":              func(_ *Input, f *verify.Verification) { f.EnclaveMeasurement.Type = measurement.SevGuestV2 },
+		"unsupported-cpu":  func(_ *Input, f *verify.Verification) { f.EnclaveMeasurement.Type = "unsupported" },
 		"expired-evidence": func(_ *Input, f *verify.Verification) { f.FreshnessExpiresAt = time.Now().Add(-time.Minute) },
 		"missing-key":      func(_ *Input, f *verify.Verification) { f.CryptoMaterial = f.CryptoMaterial[:1] },
 	}
+	for _, platform := range []measurement.PredicateType{measurement.TdxGuestV2, measurement.SevGuestV2} {
+		for name, change := range cases {
+			t.Run(string(platform)+"/"+name, func(t *testing.T) {
+				in, _, facts := fixture(t)
+				facts.EnclaveMeasurement.Type = platform
+				change(&in, facts)
+				raw, _ := json.Marshal(in)
+				out, err := verifyInput(raw, func(doc, nonce []byte, repo string) (*verify.Verification, error) {
+					if len(nonce) != 32 || repo != facts.ConfigRepo {
+						t.Fatal("untrusted hardware expectations")
+					}
+					return facts, nil
+				})
+				if name == "valid" {
+					if err != nil {
+						t.Fatal(err)
+					}
+					var v Verified
+					json.Unmarshal(out, &v)
+					if v.EvidenceExpiresAt != in.Context.Now+240 || v.EncryptionKey != in.Evidence.EncryptionKey {
+						t.Fatal("wrong verified projection")
+					}
+				} else if err == nil || string(out) != "" || err.Error() != "gateway attestation failed" {
+					t.Fatal("unsafe acceptance or error disclosure")
+				}
+			})
+		}
+	}
+}
+
+func TestStrictSNPRejectsDebugMigrationAndProvisionalFirmware(t *testing.T) {
+	cases := map[string]func(*sevp.Report){
+		"valid":             func(*sevp.Report) {},
+		"debug":             func(r *sevp.Report) { r.Policy = sevabi.SnpPolicyToBytes(sevabi.SnpPolicy{Debug: true}) },
+		"migration":         func(r *sevp.Report) { r.Policy = sevabi.SnpPolicyToBytes(sevabi.SnpPolicy{MigrateMA: true}) },
+		"vmpl":              func(r *sevp.Report) { r.Vmpl = 1 },
+		"provisional-tcb":   func(r *sevp.Report) { r.CurrentTcb = 1 },
+		"provisional-build": func(r *sevp.Report) { r.CurrentBuild = 1 },
+		"provisional-major": func(r *sevp.Report) { r.CurrentMajor = 1 },
+		"provisional-minor": func(r *sevp.Report) { r.CurrentMinor = 1 },
+	}
 	for name, change := range cases {
 		t.Run(name, func(t *testing.T) {
-			in, _, facts := fixture(t)
-			change(&in, facts)
-			raw, _ := json.Marshal(in)
-			out, err := verifyInput(raw, func(doc, nonce []byte, repo string) (*verify.Verification, error) {
-				if len(nonce) != 32 || repo != facts.ConfigRepo {
-					t.Fatal("untrusted hardware expectations")
-				}
-				return facts, nil
-			})
-			if name == "valid" {
-				if err != nil {
-					t.Fatal(err)
-				}
-				var v Verified
-				json.Unmarshal(out, &v)
-				if v.EvidenceExpiresAt != in.Context.Now+240 || v.EncryptionKey != in.Evidence.EncryptionKey {
-					t.Fatal("wrong verified projection")
-				}
-			} else if err == nil || string(out) != "" || err.Error() != "gateway attestation failed" {
-				t.Fatal("unsafe acceptance or error disclosure")
+			r := &sevp.Report{Policy: sevabi.SnpPolicyToBytes(sevabi.SnpPolicy{})}
+			change(r)
+			if (strictSNP(r) == nil) != (name == "valid") {
+				t.Fatal("incorrect SNP production policy")
 			}
 		})
+	}
+	if strictSNP(nil) == nil {
+		t.Fatal("missing SNP report accepted")
 	}
 }
 func TestProductionRejectsFabricatedHardware(t *testing.T) {

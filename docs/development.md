@@ -42,7 +42,7 @@ Runtime bases are digest-pinned. Package installation is not claimed to be
 byte-for-byte reproducible; the measured immutable image covers installed bytes.
 
 An ordinary host cannot open the gateway listener: it lacks fresh valid Tinfoil
-TDX evidence, granted keys, signed provenance and backend admission. There is no
+supported CPU evidence, granted keys, signed provenance and backend admission. There is no
 debug/plaintext fallback. Measured Tinfoil config supplies
 `AXIOM_GATEWAY_CONFIG_JSON`; a CLI JSON path is also accepted for diagnostics,
 with identical mandatory attestation checks.

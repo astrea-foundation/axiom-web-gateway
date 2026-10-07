@@ -1,6 +1,6 @@
 # Tinfoil deployment
 
-The implemented target is a non-debug, CPU-only Intel TDX Tinfoil Container using
+The implemented target is a non-debug, CPU-only AMD SEV-SNP or Intel TDX Tinfoil Container using
 CVM 0.14.13 or a subsequently qualified version with nonce-bound v3 local
 attestation and boot key grants. The public `astrea-foundation/axiom-web-gateway`
 repository owns source, root `tinfoil-config.yml` and both measured release
@@ -121,16 +121,21 @@ starting the gateway to avoid a bootstrap loop. Renew policy before its 24-hour
 expiry, increasing sequence; supported releases get signed build provenance
 without end-user commit approval. Development artifacts never authorize prod.
 
-List available hosts and select an Intel TDX host; this implementation explicitly
-rejects SNP/unsupported platforms. Use the stable gateway domain that was signed
-in the config, verified for use with your Tinfoil organization. Create an
+List available hosts or use the organization default. Both AMD SEV-SNP and
+Intel TDX use the complete pinned offline verifier and the same measured
+boot-key/provenance contract. An empty host list can still permit automatic
+placement; inspect the created instance and qualify its actual platform.
+Unsupported platforms, debug mode and provisional SNP firmware are rejected.
+Use the stable gateway domain signed in the configuration. The generated
+Tinfoil domain can be used directly for staging; a custom domain needs separate
+organization/DNS verification. Create an
 explicitly non-debug staging instance using its published release:
 
 ```sh
 tinfoil container hosts
 tinfoil container create axiom-gateway-staging \
   --repo astrea-foundation/axiom-web-gateway --tag v0.0.1-staging.1 --mark-latest=false \
-  --host INTEL_TDX_HOST --custom-domain gateway-staging.example
+  --custom-domain gateway-staging.example
 tinfoil container get axiom-gateway-staging
 ```
 

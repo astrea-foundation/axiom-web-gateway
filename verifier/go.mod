@@ -6,7 +6,11 @@ replace github.com/in-toto/in-toto-golang => github.com/tinfoilsh/in-toto-golang
 
 replace github.com/google/logger => github.com/tinfoilsh/google-logger v0.0.0-20251028051824-44df5807cdb9
 
-require github.com/tinfoilsh/tinfoil-go v0.17.0-rc.1
+require (
+	github.com/google/go-tdx-guest v0.3.1
+	github.com/tinfoilsh/go-sev-guest v0.0.0-20260818055935-bec7bdb637fd
+	github.com/tinfoilsh/tinfoil-go v0.17.0-rc.1
+)
 
 require (
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
@@ -43,7 +47,6 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/google/certificate-transparency-go v1.3.3 // indirect
 	github.com/google/go-containerregistry v0.21.7 // indirect
-	github.com/google/go-tdx-guest v0.3.1 // indirect
 	github.com/google/logger v1.1.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
@@ -61,7 +64,6 @@ require (
 	github.com/sigstore/sigstore-go v1.2.2 // indirect
 	github.com/sigstore/timestamp-authority/v2 v2.1.3 // indirect
 	github.com/theupdateframework/go-tuf/v2 v2.4.2 // indirect
-	github.com/tinfoilsh/go-sev-guest v0.0.0-20260818055935-bec7bdb637fd // indirect
 	github.com/transparency-dev/formats v0.1.1 // indirect
 	github.com/transparency-dev/merkle v0.0.2 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
