@@ -40,7 +40,7 @@
   "containers": [
     {
       "name": "gateway",
-      "image": "ghcr.io/astrea-foundation/axiom-web-gateway@sha256:6171c55a83819a62b2505e0c2e57435c8bcf20b5e2de97569d86ae897c639067",
+      "image": "ghcr.io/astrea-foundation/axiom-web-gateway@sha256:f3eac8b6bcbaf498b6fe1e456518fc0af590abc576cd23be6fd430e6b73cc900",
       "user": "10001:10001",
       "attestation": true,
       "keys": [
@@ -56,7 +56,7 @@
       "pids_limit": 128,
       "env": [
         {
-          "AXIOM_GATEWAY_CONFIG_JSON": "{\"listen\":\"0.0.0.0:8080\",\"public_origin\":\"https://axiom-gateway-staging.axiomai.containers.tinfoil.dev\",\"backend_origin\":\"https://api-staging.axiom.stream\",\"publisher_key\":\"7ce33c4faec560b2fc191c7beb373a690ef80ba769e9011941f2578dc49b8c33\",\"browser_origins\":[\"https://app-staging.axiom.stream\",\"https://auth-staging.axiom.stream\"],\"max_concurrency\":32,\"max_sessions\":512,\"attestation_socket\":\"/tinfoil/attestation.sock\",\"encryption_key_path\":\"/run/tinfoil/keys/axiom-encryption/private_key.pem\",\"authorization_key_path\":\"/run/tinfoil/keys/axiom-authorization/private_key.pem\",\"verifier\":\"/usr/local/bin/axiom-gateway-verify\"}"
+          "AXIOM_GATEWAY_CONFIG_JSON": "{\"listen\":\"0.0.0.0:8080\",\"public_origin\":\"https://axiom-gateway-staging.axiomai.containers.tinfoil.dev\",\"backend_origin\":\"https://api-staging.axiom.stream\",\"publisher_key\":\"7ce33c4faec560b2fc191c7beb373a690ef80ba769e9011941f2578dc49b8c33\",\"browser_origins\":[\"https://auth-staging.axiom.stream\"],\"max_concurrency\":32,\"max_sessions\":512,\"attestation_socket\":\"/tinfoil/attestation.sock\",\"encryption_key_path\":\"/run/tinfoil/keys/axiom-encryption/private_key.pem\",\"authorization_key_path\":\"/run/tinfoil/keys/axiom-authorization/private_key.pem\",\"verifier\":\"/usr/local/bin/axiom-gateway-verify\"}"
         }
       ]
     }
@@ -65,7 +65,6 @@
     "upstream-port": 8080,
     "upstream-container": "gateway",
     "origins": [
-      "https://app-staging.axiom.stream",
       "https://auth-staging.axiom.stream"
     ],
     "paths": [

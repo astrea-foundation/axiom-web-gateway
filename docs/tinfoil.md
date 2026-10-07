@@ -206,3 +206,13 @@ The gateway closes the verifier stdin descriptor before awaiting output. A
 process-framing regression checks EOF delivery; it does not mock live hardware
 qualification. Backend runtime roles also need the documented gateway table
 grants before admission can succeed.
+
+## Shared-chat staging workload
+
+The staging configuration selects the immutable upload-capable runtime from
+source `23ca69e60604f8cc9d7976d4c261580817b2a9a5`, built by
+[container artifacts 37641794831](https://github.com/astrea-foundation/axiom-web-gateway/actions/runs/37641794831).
+This update adds bounded original-file uploads and authenticated acceptance events.
+It requires a newly measured staging release and publisher-signed source mapping;
+the prior staging qualification does not cover this workload. Hardware, key,
+freshness, stream-completion and upstream provider checks remain required.
