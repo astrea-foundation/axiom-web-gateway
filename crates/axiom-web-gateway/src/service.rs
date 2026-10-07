@@ -32,6 +32,7 @@ use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
 pub struct State {
+    pub uploads: Mutex<crate::uploads::Uploads>,
     pub config: Config,
     pub identity: Arc<Identity>,
     pub authorization_key: ed25519_dalek::SigningKey,
@@ -53,11 +54,13 @@ pub struct Lease {
     expires_at: u64,
 }
 pub struct Session {
+    id: String,
     account: String,
     key: BrowserKey,
     client: Arc<SecureClient>,
     expires_at: u64,
     replays: Mutex<BTreeMap<String, u64>>,
+    requests: Mutex<BTreeMap<String, u64>>,
 }
 
 // Match the verifier's clock tolerance, without extending a local lifetime.
@@ -92,8 +95,26 @@ struct RpcPayload {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum Operation {
     Models,
-    Infer { request: Box<ChatCompletionRequest> },
-    Cancel { target_request_id: String },
+    Infer {
+        request: Box<ChatCompletionRequest>,
+        #[serde(default)]
+        uploads: Vec<crate::uploads::Binding>,
+    },
+    UploadBegin {
+        upload: crate::uploads::Begin,
+    },
+    UploadChunk {
+        upload_id: String,
+        offset: usize,
+        data: String,
+        final_chunk: bool,
+    },
+    UploadAbort {
+        target_request_id: String,
+    },
+    Cancel {
+        target_request_id: String,
+    },
 }
 
 impl State {
@@ -333,11 +354,13 @@ async fn session(
         sessions.insert(
             id.clone(),
             Arc::new(Session {
+                id: id.clone(),
                 account,
                 key,
                 client,
                 expires_at,
                 replays: Mutex::new(BTreeMap::new()),
+                requests: Mutex::new(BTreeMap::new()),
             }),
         );
         Ok::<_, anyhow::Error>(json!({"protocol":PROTOCOL,"session_id":id,"expires_at":expires_at}))
@@ -518,6 +541,36 @@ impl Output {
     }
 }
 
+async fn cancel_owned(state: &State, session: &Session, target_request_id: &str) -> Result<Value> {
+    ensure!(target_request_id.len() == 32, "invalid cancellation target");
+    let active = state.active.lock().await;
+    if let Some(target) = active.get(&(session.account.clone(), target_request_id.to_owned())) {
+        target.cancellation.cancel();
+    } else {
+        // Completion can race cancellation. Only this session's admission journal
+        // permits success after the active operation has finished.
+        ensure!(
+            session
+                .requests
+                .lock()
+                .await
+                .get(target_request_id)
+                .is_some_and(|expiry| *expiry > now()),
+            "request not owned by account"
+        );
+    }
+    Ok(json!({"cancelled": true}))
+}
+
+async fn discard_uploads(state: &State, session: &Session, target: &str) -> Result<Value> {
+    state
+        .uploads
+        .lock()
+        .await
+        .discard(&session.account, &session.id, target);
+    Ok(json!({"discarded": true}))
+}
+
 async fn execute(
     state: &Arc<State>,
     session: &Arc<Session>,
@@ -527,22 +580,54 @@ async fn execute(
     output: &mut Output,
 ) -> Result<Value> {
     match payload.operation {
+        Operation::UploadBegin { upload } => {
+            let id = state.uploads.lock().await.begin(
+                &session.account,
+                &session.id,
+                upload,
+                now(),
+                session.expires_at,
+            )?;
+            Ok(json!({"upload_id": id}))
+        }
+        Operation::UploadChunk {
+            upload_id,
+            offset,
+            data,
+            final_chunk,
+        } => {
+            state.uploads.lock().await.chunk(
+                &session.account,
+                &session.id,
+                &upload_id,
+                offset,
+                &data,
+                final_chunk,
+                now(),
+            )?;
+            Ok(json!({"stored": true}))
+        }
+        Operation::UploadAbort { target_request_id } => {
+            discard_uploads(state, session, &target_request_id).await
+        }
         Operation::Models => {
             let models = session.client.models(cancellation.clone()).await?;
             output.send("models", serde_json::to_value(models)?).await?;
             Ok(json!({}))
         }
         Operation::Cancel { target_request_id } => {
-            ensure!(target_request_id.len() == 32, "invalid cancellation target");
-            let active = state.active.lock().await;
-            let target = active
-                .get(&(session.account.clone(), target_request_id))
-                .context("request not owned by account")?;
-            target.cancellation.cancel();
-            Ok(json!({"cancelled":true}))
+            cancel_owned(state, session, &target_request_id).await
         }
-        Operation::Infer { request } => {
+        Operation::Infer { request, uploads } => {
             let mut request = (*request).into_domain(CompatMode::Strict)?.request;
+            let _upload_capacity = state.uploads.lock().await.attach(
+                &session.account,
+                &session.id,
+                &payload.request_id,
+                &uploads,
+                &mut request,
+                now(),
+            )?;
             let _permit = state
                 .slots
                 .clone()
@@ -560,6 +645,13 @@ async fn execute(
                         && !active.contains_key(&active_key),
                     "account concurrency reached"
                 );
+                let mut requests = session.requests.lock().await;
+                requests.retain(|_, expiry| *expiry > now());
+                ensure!(
+                    requests.len() < 4096 && !requests.contains_key(&payload.request_id),
+                    "inference request already admitted"
+                );
+                requests.insert(payload.request_id.clone(), session.expires_at);
                 active.insert(
                     active_key,
                     ActiveRequest {
@@ -568,6 +660,9 @@ async fn execute(
                     },
                 );
             }
+            output
+                .send("accepted", json!({"request_id": payload.request_id}))
+                .await?;
             infer(
                 session,
                 &mut request,
