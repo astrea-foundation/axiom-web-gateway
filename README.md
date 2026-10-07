@@ -1,6 +1,6 @@
 # Axiom Web Gateway
 
-A Rust gateway for **Tinfoil Containers on Intel TDX**. Browsers verify the
+A Rust gateway for **Tinfoil Containers on AMD SEV-SNP or Intel TDX**. Browsers verify the
 measured gateway and its keys, encrypt to it, and receive authenticated streams.
 The gateway reuses Axiom's attested provider-E2EE client for upstream inference.
 The ordinary platform backend handles ciphertext, admission and account billing.

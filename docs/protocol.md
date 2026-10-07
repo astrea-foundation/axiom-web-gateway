@@ -1,7 +1,8 @@
 # Browser protocol and SDK
 
-The implemented contract is `axiom-gateway-v2` for Tinfoil Intel TDX. Azure v1
-proofs and signature domains are rejected; there is no cross-platform fallback.
+The implemented contract is `axiom-gateway-v2` for Tinfoil AMD SEV-SNP and Intel TDX.
+Azure v1 proofs and signature domains are rejected. Only nonce-bound v3
+documents with the complete supported vendor verification chain are accepted.
 
 ## Proof and admission
 
@@ -21,10 +22,13 @@ from a Sigstore-authenticated build artifact, never observed quote measurements.
 The browser pins the Axiom publisher independently, fetches current policy from
 the platform and locally runs the packaged native-equivalent verifier. Its own
 nonce, origin, clock and remembered policy sequence are verifier context. The
-verifier checks Tinfoil's nonce/report-data binding, CPU signature, strict TDX
+verifier checks Tinfoil's nonce/report-data binding, CPU signature, strict vendor
 policy/debug rejection, vendor revocation, measured code/platform, release
 provenance/freshness, and exact endorsed SPKI boot keys `axiom-encryption`
-(X25519) and `axiom-authorization` (Ed25519). Evidence cannot choose trust roots.
+(X25519) and `axiom-authorization` (Ed25519). Evidence cannot choose trust roots. SNP requires the endorsed launch/firmware
+floors, VMPL 0, disabled debug and migration, and fully committed firmware
+TCB/build/API versions. TDX additionally requires a non-debug guest and
+UpToDate Intel collateral status.
 
 The backend invokes the separately packaged static verifier with the current
 first-party policy and a single-use, 60-second admission challenge. Possession

@@ -1,6 +1,6 @@
 # Gateway architecture
 
-The deployment target is a CPU-only Tinfoil Container on Intel TDX. Message
+The deployment target is a CPU-only Tinfoil Container on AMD SEV-SNP or Intel TDX. Message
 plaintext exists only in the browser, the attested gateway's protected memory,
 and the authenticated upstream provider enclave. The ordinary platform, edge,
 host and storage retain ciphertext and operational metadata only.

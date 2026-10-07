@@ -82,7 +82,7 @@ async fn collect(
     )
     .await??;
     // A lookup hint only. The verifier authenticates this digest and measurement
-    // against the signed release and running TDX quote before opening a listener.
+    // against the signed release and running CPU quote before opening a listener.
     let entries = local["collateral"]
         .as_array()
         .context("missing collateral")?;

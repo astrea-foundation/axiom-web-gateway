@@ -8,9 +8,15 @@ import (
 	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	tdxabi "github.com/google/go-tdx-guest/abi"
+	tdxpb "github.com/google/go-tdx-guest/proto/tdx"
+	sevabi "github.com/tinfoilsh/go-sev-guest/abi"
+	sevp "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
+	"github.com/tinfoilsh/tinfoil-go/document"
 	"github.com/tinfoilsh/tinfoil-go/verify"
 	"github.com/tinfoilsh/tinfoil-go/verify/measurement"
 	"io"
@@ -130,7 +136,52 @@ func productionVerifier(doc, nonce []byte, repo string) (*verify.Verification, e
 	if err != nil {
 		return nil, err
 	}
-	return v.VerifyV3(doc, nonce, repo)
+	facts, err := v.VerifyV3(doc, nonce, repo)
+	if err != nil {
+		return nil, err
+	}
+	// Endorsements authenticate the fleet policy. Axiom additionally rejects
+	// debug/migration capabilities and provisional SNP firmware even if a
+	// future endorsed development policy were to permit them.
+	parsed, err := document.Parse(doc, nonce)
+	if err != nil {
+		return nil, err
+	}
+	cpu := parsed.CPUEvidence()
+	switch cpu.Format {
+	case document.SEVSNPReportV1Format:
+		report, err := sevabi.ReportToProto(cpu.Report)
+		if err != nil || strictSNP(report) != nil {
+			return nil, rejected
+		}
+	case document.TDXQuoteV1Format:
+		quote, err := tdxabi.QuoteToProto(cpu.Report)
+		if err != nil {
+			return nil, rejected
+		}
+		q, ok := quote.(*tdxpb.QuoteV4)
+		if !ok || len(q.GetTdQuoteBody().GetTdAttributes()) != 8 || binary.LittleEndian.Uint64(q.GetTdQuoteBody().GetTdAttributes())&1 != 0 {
+			return nil, rejected
+		}
+	default:
+		return nil, rejected
+	}
+	return facts, nil
+}
+
+func strictSNP(report *sevp.Report) error {
+	if report == nil {
+		return rejected
+	}
+	policy, err := sevabi.ParseSnpPolicy(report.GetPolicy())
+	if err != nil || policy.Debug || policy.MigrateMA || report.GetVmpl() != 0 ||
+		report.GetCurrentTcb() != report.GetCommittedTcb() ||
+		report.GetCurrentBuild() != report.GetCommittedBuild() ||
+		report.GetCurrentMajor() != report.GetCommittedMajor() ||
+		report.GetCurrentMinor() != report.GetCommittedMinor() {
+		return rejected
+	}
+	return nil
 }
 
 // The injected function is unexported and used only by unit tests to isolate
@@ -183,7 +234,9 @@ func verifyInput(raw []byte, hardware func([]byte, []byte, string) (*verify.Veri
 	}
 	expected, _ := json.Marshal(m.CodeMeasurement)
 	actual, _ := json.Marshal(facts.CodeMeasurement)
-	if facts.ConfigRepo != p.ConfigRepository || facts.EnclaveMeasurement == nil || facts.EnclaveMeasurement.Type != measurement.TdxGuestV2 || facts.CodeMeasurement == nil || !bytes.Equal(expected, actual) || facts.CodeDigest != m.ConfigDigest || facts.FreshnessExpiresAt.Unix() <= c.Now {
+	if facts.ConfigRepo != p.ConfigRepository || facts.EnclaveMeasurement == nil ||
+		(facts.EnclaveMeasurement.Type != measurement.TdxGuestV2 && facts.EnclaveMeasurement.Type != measurement.SevGuestV2) ||
+		facts.CodeMeasurement == nil || !bytes.Equal(expected, actual) || facts.CodeDigest != m.ConfigDigest || facts.FreshnessExpiresAt.Unix() <= c.Now {
 		return nil, rejected
 	}
 	enc, err := facts.CryptoMaterialData("axiom-encryption", "https://tinfoil.sh/key/spki/v1")

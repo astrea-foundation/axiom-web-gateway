@@ -1,6 +1,7 @@
 # Tinfoil migration decision
 
-Implemented on 2026-10-06 on a development branch. Tinfoil Intel TDX replaces the
+Implemented on 2026-10-06 and extended for AMD SEV-SNP on 2026-10-07.
+Tinfoil Containers replace the
 unqualified Azure appliance. Rust inference composition, pinned provider clients,
 account-scoped relay and authenticated browser completion are retained.
 
@@ -14,7 +15,7 @@ templates have been removed. Historical local Azure evidence remains dated.
 Two changes from the original plan are deliberate:
 
 - The inspected official JavaScript verifier only handles older SNP evidence.
-  The official Go verifier supports v3 TDX, all boot keys and offline collateral;
+  The official Go verifier supports v3 SNP/TDX, all boot keys and offline collateral;
   it is compiled for both the native executable and browser WASM worker. Neither
   client nor backend falls back to legacy verification.
 - Application EHBP terminates in Rust. A separate attested boot X25519 key and
@@ -22,9 +23,10 @@ Two changes from the original plan are deliberate:
   This preserves the existing tested ordered/terminal transport without relying
   on a plaintext-accepting shim as the application authorization boundary.
 
-Local tests/builds do not qualify hosted hardware. Remaining work: organization
-admin login, a measured configuration in this public repository, image publication,
-a published measured release, staging platform v2 configuration/documents, then
+Local tests/builds do not qualify hosted hardware. Organization admin login, public image
+publication and measured staging releases have been exercised. Automatic
+placement assigned an AMD host; the initial instance was stopped during SNP
+qualification. Remaining work: staging platform v2 configuration/documents, then
 fresh browser/backend acceptance, encrypted provider runs, isolation, refresh,
 restart and log/load qualification. No production promotion or Desktop release
 is part of this migration. See the executable commands in [deployment](tinfoil.md).
