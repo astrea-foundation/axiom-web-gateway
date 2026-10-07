@@ -40,7 +40,7 @@
   "containers": [
     {
       "name": "gateway",
-      "image": "ghcr.io/astrea-foundation/axiom-web-gateway@sha256:4096a9bbafef04aaf148efefb95b5d095e416808794b255890cfbe41b936917c",
+      "image": "ghcr.io/astrea-foundation/axiom-web-gateway@sha256:d6c7378edd7b0fa01a40e51b9c4f014f2b8099e45a26ce42a7cccda5c98ea91f",
       "user": "10001:10001",
       "attestation": true,
       "keys": [
