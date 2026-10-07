@@ -56,9 +56,9 @@ func TestPolicyKeyAndMeasurementBindings(t *testing.T) {
 		"expired-evidence": func(_ *Input, f *verify.Verification) { f.FreshnessExpiresAt = time.Now().Add(-time.Minute) },
 		"missing-key":      func(_ *Input, f *verify.Verification) { f.CryptoMaterial = f.CryptoMaterial[:1] },
 	}
-	for _, platform := range []string{measurement.TdxGuestV2, measurement.SevGuestV2} {
+	for _, platform := range []measurement.PredicateType{measurement.TdxGuestV2, measurement.SevGuestV2} {
 		for name, change := range cases {
-			t.Run(platform+"/"+name, func(t *testing.T) {
+			t.Run(string(platform)+"/"+name, func(t *testing.T) {
 				in, _, facts := fixture(t)
 				facts.EnclaveMeasurement.Type = platform
 				change(&in, facts)
