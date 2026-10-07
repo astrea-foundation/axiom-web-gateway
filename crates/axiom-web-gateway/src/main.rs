@@ -4,7 +4,7 @@ mod transport;
 
 use anyhow::{Context, Result, ensure};
 use axiom_gateway_protocol::{SignedDocument, TrustPolicy, verify_document};
-use azure_tpm::TpmCommandExt as _;
+use ed25519_dalek::pkcs8::DecodePrivateKey as _;
 use serde::Deserialize;
 use std::{
     collections::BTreeMap,
@@ -26,6 +26,10 @@ pub struct Config {
     pub browser_origins: Vec<String>,
     pub max_concurrency: usize,
     pub max_sessions: usize,
+    pub attestation_socket: String,
+    pub encryption_key_path: String,
+    pub authorization_key_path: String,
+    pub verifier: String,
 }
 
 #[must_use]
@@ -71,42 +75,58 @@ async fn collect(
     authorization_key: &ed25519_dalek::SigningKey,
     minimum_sequence: u64,
 ) -> Result<Arc<attestation::Collector>> {
-    let pcr11 = tokio::task::spawn_blocking(|| -> Result<_> {
-        let tpm = azure_tpm::Tpm::open()?;
-        let pcrs = tpm.read_pcrs_sha256(&[11])?;
-        Ok(hex::encode(
-            &pcrs.first().context("missing workload measurement")?.1,
-        ))
-    })
+    let nonce = hex::encode(rand::random::<[u8; 32]>());
+    let local = tokio::time::timeout(
+        Duration::from_secs(20),
+        attestation::local_document(&config.attestation_socket, &nonce),
+    )
     .await??;
-    let (manifest, policy) = tokio::try_join!(
-        document::<SignedDocument>(
-            client,
-            format!(
-                "{}/api/v1/web-gateway/manifests/{pcr11}",
-                config.backend_origin
-            )
+    // A lookup hint only. The verifier authenticates this digest and measurement
+    // against the signed release and running TDX quote before opening a listener.
+    let entries = local["collateral"]
+        .as_array()
+        .context("missing collateral")?;
+    let code = entries
+        .iter()
+        .find(|v| v["format"] == "https://tinfoil.sh/collateral/sigstore-code/v1")
+        .context("missing code provenance")?;
+    let digest = code["data"]["digest"]
+        .as_str()
+        .context("missing config digest")?;
+    ensure!(
+        digest.len() == 64
+            && digest
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        "invalid config digest"
+    );
+    let manifest = document::<SignedDocument>(
+        client,
+        format!(
+            "{}/api/v1/web-gateway/manifests/{digest}",
+            config.backend_origin
         ),
-        document::<SignedDocument>(
-            client,
-            format!("{}/api/v1/web-gateway/trust-policy", config.backend_origin)
-        )
-    )?;
+    )
+    .await?;
+    let policy = document::<SignedDocument>(
+        client,
+        format!("{}/api/v1/web-gateway/trust-policy", config.backend_origin),
+    )
+    .await?;
     let trusted: TrustPolicy =
-        verify_document(&policy, &config.publisher_key, "axiom-gateway-policy-v1")?;
+        verify_document(&policy, &config.publisher_key, "axiom-gateway-policy-v2")?;
     ensure!(
         trusted.sequence >= minimum_sequence,
         "gateway trust policy rollback"
     );
     attestation::Collector::new(
-        config.public_origin.clone(),
+        config,
         identity.public_hex.clone(),
         hex::encode(authorization_key.verifying_key().as_bytes()),
-        config.publisher_key.clone(),
         manifest,
         policy,
+        minimum_sequence,
     )
-    .await
 }
 
 #[tokio::main]
@@ -122,7 +142,11 @@ async fn run() -> Result<()> {
     let path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "/etc/axiom-gateway/config.json".into());
-    let raw = std::fs::read(Path::new(&path))?;
+    let raw = match std::env::var("AXIOM_GATEWAY_CONFIG_JSON") {
+        Ok(value) => value.into_bytes(),
+        Err(std::env::VarError::NotPresent) => std::fs::read(Path::new(&path))?,
+        Err(_) => anyhow::bail!("invalid measured runtime configuration"),
+    };
     ensure!(raw.len() <= 16384, "configuration exceeds limit");
     let config: Config = serde_json::from_slice(&raw)?;
     origin(&config.public_origin)?;
@@ -141,8 +165,13 @@ async fn run() -> Result<()> {
         "invalid publisher key"
     );
     // No tracing subscriber: failures expose only the constant above.
-    let identity = Arc::new(transport::Identity::generate());
-    let authorization_key = ed25519_dalek::SigningKey::from_bytes(&rand::random());
+    let identity = Arc::new(transport::Identity::load(Path::new(
+        &config.encryption_key_path,
+    ))?);
+    let signing_pem =
+        zeroize::Zeroizing::new(std::fs::read_to_string(&config.authorization_key_path)?);
+    ensure!(signing_pem.len() <= 4096, "private key exceeds limit");
+    let authorization_key = ed25519_dalek::SigningKey::from_pkcs8_pem(&signing_pem)?;
     let http = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
@@ -159,7 +188,7 @@ async fn run() -> Result<()> {
     let policy: TrustPolicy = verify_document(
         &initial.policy,
         &config.publisher_key,
-        "axiom-gateway-policy-v1",
+        "axiom-gateway-policy-v2",
     )?;
     let shutdown = CancellationToken::new();
     let state = Arc::new(service::State {
@@ -197,7 +226,7 @@ async fn run() -> Result<()> {
                 let policy: TrustPolicy = verify_document(
                     &proof.policy,
                     &refresh_state.config.publisher_key,
-                    "axiom-gateway-policy-v1",
+                    "axiom-gateway-policy-v2",
                 )?;
                 sequence = policy.sequence;
                 *refresh_state.collector.write().await = candidate;

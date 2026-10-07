@@ -101,7 +101,7 @@ impl State {
             .to_owned();
         let collector = Arc::clone(&*self.collector.read().await);
         let evidence = collector.proof(challenge.clone()).await?;
-        let signature = self.sign(b"axiom-gateway-register-v1", challenge.as_bytes());
+        let signature = self.sign(b"axiom-gateway-register-v2", challenge.as_bytes());
         let value = self
             .backend(
                 "register",
@@ -145,7 +145,7 @@ impl State {
         if let Some(lease) = lease {
             request = request.header("x-gateway-lease", lease).header(
                 "x-gateway-signature",
-                self.sign(b"axiom-gateway-exchange-v1", &raw),
+                self.sign(b"axiom-gateway-exchange-v2", &raw),
             );
         }
         let mut response = request
@@ -177,9 +177,9 @@ pub fn router(state: Arc<State>) -> Result<Router> {
         .allow_methods([axum::http::Method::POST, axum::http::Method::GET])
         .allow_headers([
             header::CONTENT_TYPE,
-            axum::http::HeaderName::from_static("ehbp-encapsulated-key"),
+            axum::http::HeaderName::from_static("axiom-encapsulated-key"),
         ])
-        .expose_headers([axum::http::HeaderName::from_static("ehbp-response-nonce")]);
+        .expose_headers([axum::http::HeaderName::from_static("axiom-response-nonce")]);
     Ok(Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/v1/attestation", post(proof))
@@ -243,7 +243,7 @@ fn open(state: &State, headers: &HeaderMap, body: &[u8]) -> Result<(Envelope, Re
         "outer credentials forbidden"
     );
     let encapsulated = headers
-        .get("ehbp-encapsulated-key")
+        .get("axiom-encapsulated-key")
         .context("encrypted request required")?
         .to_str()?;
     let (plaintext, reply) = state.identity.open(encapsulated, body)?;
@@ -346,7 +346,7 @@ fn encrypted_response(nonce: &str, body: Body) -> Response {
     // Accept ownership so callers can move the nonce out of their reply state.
     let nonce = HeaderValue::from_str(nonce).expect("nonce is hex");
     let mut response = Response::new(body);
-    response.headers_mut().insert("ehbp-response-nonce", nonce);
+    response.headers_mut().insert("axiom-response-nonce", nonce);
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/octet-stream"),

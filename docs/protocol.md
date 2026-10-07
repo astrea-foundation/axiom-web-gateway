@@ -1,121 +1,91 @@
-# Browser and gateway protocol
+# Browser protocol and SDK
 
-This documents the implemented Azure v1 contract. The planned Tinfoil v2
-transport and evidence changes are in the [migration plan](tinfoil-migration.md);
-they are not supported by the current SDK or service.
+The implemented contract is `axiom-gateway-v2` for Tinfoil Intel TDX. Azure v1
+proofs and signature domains are rejected; there is no cross-platform fallback.
 
-## Trust and proof
+## Proof and admission
 
-The installed client pins an Ed25519 build-publisher key and first-party HTTPS
-origins. Discovery is configuration metadata, not a trust root. The SDK asks the
-gateway for evidence using a fresh 32-byte challenge and a 30-second deadline.
-It fetches the current policy from the relying application's backend, then
-verifies the bundle locally using packaged WebAssembly. Native admission uses
-the same Rust verifier. Neither browser nor extension contacts Microsoft/Intel
-with account credentials or prompts to verify evidence.
+`POST /v1/attestation` accepts only a random 32-byte lowercase-hex `challenge`.
+The gateway asks `/tinfoil/attestation.sock` for
+`GET /.well-known/tinfoil-attestation/v3?nonce=<challenge>` and returns the public
+v3 document plus signed Axiom workload manifest and policy. Only the random nonce
+reaches the attestation service, never user identity, prompts, files or credentials.
 
-Verification checks Intel production-root DCAP signatures, endorsement validity
-and strictly UpToDate TCB status; a qualified Azure firmware/RTMR profile; the
-exact hardware-bound HCL runtime bytes and RSA attestation key; an RSA-signed
-TPM quote over PCRs 4, 7, 11 and 12; challenge, origin and both gateway keys;
-boot-log replay; and signed build provenance matching every quoted PCR.
-Publisher policy expires within 24 hours and carries a monotonic sequence and
-minimum workload generation. Clients should persist the accepted sequence.
-Updated signed builds do not require per-commit approvals or source allowlists.
+Policy schema 2 has sequence, issued/expiry (at most 24 hours), minimum generation
+and authenticated config-release publisher `owner/repo`. The workload manifest
+binds the immutable Tinfoil deployment artifact digest and measured register set
+to image digest, source revision, build recipe, Cargo/Go locks and canonical HTTPS
+origin. Manifest lookup uses `manifests/<config_digest>.json`. Values are derived
+from a Sigstore-authenticated build artifact, never observed quote measurements.
 
-Only the minimal verified result reaches application state: gateway origin,
-keys, source/revision, image digest, generation and policy sequence/expiry. Raw
-HCL claims may contain unavoidable VM identifiers; do not store them with users
-or send them to analytics. No account identifier or message digest enters a
-TPM/Azure challenge. Public provenance is metadata; while this repository is
-private, source inspection requires authorized GitHub access.
+The browser pins the Axiom publisher independently, fetches current policy from
+the platform and locally runs the packaged native-equivalent verifier. Its own
+nonce, origin, clock and remembered policy sequence are verifier context. The
+verifier checks Tinfoil's nonce/report-data binding, CPU signature, strict TDX
+policy/debug rejection, vendor revocation, measured code/platform, release
+provenance/freshness, and exact endorsed SPKI boot keys `axiom-encryption`
+(X25519) and `axiom-authorization` (Ed25519). Evidence cannot choose trust roots.
 
-## Account authorization
+The backend invokes the separately packaged static verifier with the current
+first-party policy and a single-use, 60-second admission challenge. Possession
+signatures use `axiom-gateway-register-v2\0 || challenge`. Admission expires at
+the earliest of 240 seconds, witness expiry and policy expiry. Exchange signatures
+use `axiom-gateway-exchange-v2\0 || exact_body`. Grant and relay scopes remain
+account-specific; see [platform delegation](https://github.com/astrea-foundation/axiom-platform/blob/dev/docs/api/web-gateway.md).
 
-Generate a nonextractable WebCrypto P-256 signing key separately from EHBP's
-X25519 encryption. With the existing HttpOnly login session and CSRF token, ask
-the platform for a 120-second, one-use grant bound to the public P-256 key. Send
-the grant to the gateway **inside EHBP**, with an ES256 DPoP proof of the logical
-POST URI, grant hash, timestamp, random replay ID, accepted gateway encryption
-key and SHA256 of the exact inner payload string. The backend sees only the
-minimal grant exchange, never an inference envelope.
+## Encrypted requests and completion
 
-The gateway first obtains a short admission lease by proving its own hardware,
-workload and authorization key to the backend. It signs the exact exchange body
-with that separate attested Ed25519 key. The backend verifies both signatures,
-atomically consumes the grant, rechecks account/login state and returns a
-15-minute relay credential for that account. No general-purpose/shared user API
-key is used. Account credentials are not encryption key material.
-
-The browser receives only an encrypted random session ID. The grant helper
-uses the existing authenticated API session endpoint to obtain CSRF even when
-the chat page cannot read the API host cookie; it forwards no profile data. Every RPC requires a
-new sender-constrained proof bound to the session ID, RPC URI and exact payload.
-The gateway stores at most four sessions per account, a bounded replay set per
-session, and five active inference requests per account. Backend credentials
-remain in gateway memory. Logout/revocation prevents subsequent authenticated
-backend calls; already accepted upstream streams may finish unless cancelled.
-
-## Encrypted endpoints and streams
-
-| Gateway route | Behavior |
+| Route | Body |
 | --- | --- |
-| `GET /healthz` | Process readiness only; never evidence |
-| `POST /v1/attestation` | Fresh public challenge-bound hardware/workload proof |
-| `POST /v1/session` | One complete EHBP request frame containing grant and proof |
-| `POST /v1/rpc` | EHBP `models`, strict OpenAI-shaped `infer`, or account-owned `cancel` |
+| `GET /healthz` | Public readiness only, available after admission |
+| `POST /v1/attestation` | Public nonce-bound evidence |
+| `POST /v1/session` | One complete EHBP frame containing grant and P-256 DPoP |
+| `POST /v1/rpc` | One complete EHBP frame containing `models`, strict `infer`, or owned `cancel` |
 
-Outer Cookie and Authorization headers are rejected. Bodies use the published
-EHBP HPKE suite X25519/HKDF-SHA256/AES-256-GCM, exporter and response derivation.
-No unauthenticated `/keys` endpoint is used. There is no plaintext inference or
-TLS-only fallback. Request bodies are capped at 4 MiB; SDK payloads at 3 MiB;
-response frames at 1 MiB and total plaintext response at 16 MiB. Runs have a
-600-second gateway deadline and a 30-second write/backpressure deadline. A disconnected browser cancels its upstream run.
+EHBP uses its published X25519/HKDF-SHA256/AES-256-GCM suite and response exporter.
+`Axiom-Encapsulated-Key` and `Axiom-Response-Nonce` carry the normal EHBP values.
+The custom header names keep Tinfoil's shim from decrypting the application body
+or stripping its response nonce. The shim's private hop forwards ciphertext;
+Rust alone decrypts it with the attested application key. SDK uses the upstream
+Identity encryption/decryption functions and maps headers, without global fetch
+patches or a second cipher design. Ordinary HTTP bodies, incomplete/multiple
+request frames, Authorization/Cookie headers and failed AEAD are rejected.
 
-Decrypted responses contain newline-delimited JSON frames with protocol,
-request ID, sequential frame number, kind and data. Deltas are provisional.
-The terminal frame authenticates success and a SHA256 digest of all exact
-preceding plaintext frame bytes, including newlines. The SDK requires the right
-request ID, sequence, digest, successful terminal and clean authenticated EOF.
-Missing, reordered, modified, truncated or appended frames fail completion.
-Callback output must not be persisted or labelled verified before `rpc` resolves.
+The inner envelope binds protocol, session, DPoP and exact serialized payload.
+DPoP binds POST URI, token hash, accepted encryption key, payload hash, timestamp
+and one-use replay ID. Grants last 120 seconds; sessions at most 15 minutes.
+Fresh proof is required every 240 seconds; SDK refreshes it before new RPCs and
+requires reconnect after boot-key rotation. Gateway policy refresh failure
+cancels active work. Account/session quotas, body limits, cancellation and stream
+backpressure remain enforced.
 
-The gateway refreshes hardware/collateral every 120 seconds and rejects requests
-if the 240-second epoch or publisher policy has expired. Refresh failure cancels
-all runs and stops admission.
+Response frames bind protocol, request ID, ordered sequence, kind and data. Each
+frame is AEAD-authenticated. Deltas are provisional until encrypted terminal
+completion authenticates the transcript digest and upstream verified completion,
+then EOF confirms no suffix/truncated AEAD frame. A missing terminal, provider
+failure, cancellation, reordered frames, digest substitution or AEAD failure
+cannot produce success or a persisted verified response.
 
-Inside the enclave, `axiom-secure-client` fetches the signed upstream trust
-policy, pre-verifies the selected worker/key chain, constructs the provider-E2EE
-exchange and authenticates completion. A successful result requires both a
-successful native result and its ResponseVerified event. Cancellation or missing
-upstream authentication emits failure or an interrupted stream, never success.
-Upstream proof and final result are carried in the same authenticated request
-stream. Browser-owned tools and conversation storage remain outside this
-stateless gateway; it does not launch local MCP processes.
-
-## SDK example
+## SDK use
 
 ```ts
 import { GatewayClient, browserGrant } from '@axiom/web-gateway';
-
-const client = await GatewayClient.connect({
-  publisherKey: PINNED_RELEASE_PUBLISHER_KEY,
-  gatewayOrigin: 'https://gateway.example.com',
-  backendOrigin: 'https://api.example.com',
-  minimumPolicySequence: savedPolicySequence,
-  rememberPolicySequence: savePolicySequence,
-  grant: browserGrant('https://api.example.com'),
+const gateway = await GatewayClient.connect({
+  publisherKey: installedPublisherKey,
+  gatewayOrigin: 'https://gateway.example',
+  backendOrigin: 'https://api.example',
+  minimumPolicySequence: storedSequence,
+  rememberPolicySequence: saveSequence,
+  grant: browserGrant('https://api.example'),
 });
-const result = await client.rpc({
-  op: 'infer',
-  request: { model: selectedModelId, messages: localMessages, stream: true },
-}, frame => renderProvisional(frame), { signal: abortController.signal });
+const result = await gateway.rpc({
+  op: 'infer', request: { model: selectedModel, messages, stream: true },
+}, renderProvisional, { signal: abortController.signal });
 saveVerifiedCompletion(result);
 ```
 
-An extension packages the WASM and SDK with its reviewed bundle and can supply
-WASM bytes through `verifierWasm` and its own authenticated `grant` callback.
-No remote executable code or eval is needed; Chromium WASM CSP uses the normal
-`wasm-unsafe-eval` allowance. A website still trusts delivered JavaScript: a
-compromised website can read text before encryption. Gateway attestation does
-not attest browser code or make external search/tools confidential.
+Serve the SDK, module worker, matching Go runtime and WASM as one reviewed bundle.
+No attester-supplied executable is loaded. Extensions can provide packaged bytes
+through `verifierWasm` and their own authenticated grant callback. Website code
+integrity, search-query privacy and original-file capability checks remain
+separate responsibilities.

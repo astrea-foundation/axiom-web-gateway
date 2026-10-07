@@ -20,13 +20,12 @@ tokio.workspace = true
 tokio-util.workspace = true
 rand.workspace = true
 reqwest.workspace = true
-azure-guest-attestation-sdk.workspace = true
-azure-tpm.workspace = true
-dcap-qvl = { workspace = true, features = ["report"] }
 axum = "0.8"
 tower-http = { version = "0.6", features = ["cors", "limit", "timeout"] }
 tower = { version = "0.5", features = ["limit"] }
 hpke = "0.13"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+pkcs8 = { version = "0.10", features = ["pem"] }
 aes-gcm = "0.10"
 ehbp = { package = "tinfoil-ehbp", git = "https://github.com/tinfoilsh/encrypted-http-body-protocol", rev = "93cc1fa1ad61e19f9a34fb23cb5b5d5635d3edb0" }
 futures-util = "0.3"

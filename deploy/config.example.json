@@ -3,7 +3,13 @@
   "public_origin": "https://gateway.example.com",
   "backend_origin": "https://api.example.com",
   "publisher_key": "REPLACE_WITH_PINNED_ED25519_PUBLIC_KEY_HEX",
-  "browser_origins": ["https://chat.example.com"],
+  "browser_origins": [
+    "https://chat.example.com"
+  ],
   "max_concurrency": 32,
-  "max_sessions": 512
+  "max_sessions": 512,
+  "attestation_socket": "/tinfoil/attestation.sock",
+  "encryption_key_path": "/run/tinfoil/keys/axiom-encryption/private_key.pem",
+  "authorization_key_path": "/run/tinfoil/keys/axiom-authorization/private_key.pem",
+  "verifier": "/usr/local/bin/axiom-gateway-verify"
 }
