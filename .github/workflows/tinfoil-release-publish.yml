@@ -27,10 +27,13 @@ jobs:
           config-file: ${{ github.workspace }}/tinfoil-config.yml
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Mark staging release as a prerelease
+      - name: Keep staging release eligible for freshness witnesses
         if: contains(github.ref_name, '-staging.')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           RELEASE_REF: ${{ github.ref_name }}
-        run: gh release edit "$RELEASE_REF" --prerelease --latest=false
+        # The control plane witnesses active repositories' GitHub latest.
+        # A staging suffix and staging-only runtime configuration still isolate
+        # this gateway release from production and all Desktop release APIs.
+        run: gh release edit "$RELEASE_REF" --prerelease=false --latest=false
