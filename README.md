@@ -1,29 +1,27 @@
 # Axiom Web Gateway
 
-A foundation for a gateway that runs inside a trusted execution
-environment (TEE), verifies upstream model providers and bridges their encrypted
-inference protocols to a single encrypted browser protocol. The repository is
-private during development, with open-source publication planned later.
+A Rust gateway for **Tinfoil Containers on AMD SEV-SNP or Intel TDX**. Browsers verify the
+measured gateway and its keys, encrypt to it, and receive authenticated streams.
+The gateway reuses Axiom's attested provider-E2EE client for upstream inference.
+The ordinary platform backend handles ciphertext, admission and account billing.
 
-The browser will verify the gateway before sending messages. Messages will be
-decrypted only inside the gateway enclave and the verified provider enclave.
-The ordinary Axiom backend continues to handle accounts, billing and ciphertext
-relay without receiving message plaintext.
-
-**Status:** repository and Rust dependency foundation only. There is no running
-gateway, HTTP inference endpoint, browser SDK or TEE deployment yet.
-
-Provider security and inference types are reused directly from commit-pinned
-Cargo dependencies in `axiom-desktop`; they are not copied into this repository.
+Includes the Rust service, the same pinned Tinfoil verifier in native and browser
+WASM builds, a TypeScript SDK, Docker images and a measured deployment config generator.
+Azure dependencies and appliance tooling have been removed. Local checks and
+container builds pass; hosted Tinfoil qualification is still required. No
+production gateway has been deployed.
 
 ```sh
-git clone --branch dev https://github.com/astrea-foundation/axiom-web-gateway.git
-cd axiom-web-gateway
-cargo check --workspace --locked
+pnpm install --frozen-lockfile
+cargo test --workspace --locked
+pnpm build && pnpm test
+sh scripts/build-container.sh
 ```
 
-See the [documentation index](docs/README.md) for architecture, implementation
-stages and development instructions. Development uses `dev`; production releases
-require explicit promotion to `main`.
+See [deployment](docs/tinfoil.md), [development](docs/development.md) and the
+[documentation index](docs/README.md). Provider crates are pinned Cargo Git
+dependencies; no Desktop submodule or neighboring checkout is required.
+Development targets `dev`. Source, measured Tinfoil config and release workflows
+live in this public repository. Production promotion requires explicit authorization.
 
 Licensed under [Apache-2.0](LICENSE).

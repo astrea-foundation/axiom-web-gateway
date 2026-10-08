@@ -1,55 +1,56 @@
 # Development
 
-## Build the foundation
-
-Use `~/sync2/work/axiom-web-gateway`. A normal clone does not require Git
-submodules, pnpm, Electron or another Axiom checkout. Install a compatible Rust
-toolchain; the workspace declares a minimum Rust version of 1.88. The committed
-lockfile records the dependency set used for validation.
+Use `~/sync2/work/axiom-web-gateway`. Required tools: Rust 1.90+, Go 1.27.1,
+Node 24+, pnpm 11.22, OpenSSL and Podman or Docker for packaging. `Cargo.lock`,
+`verifier/go.mod`, `verifier/go.sum` and `pnpm-lock.yaml` pin dependencies.
+No Desktop checkout is required. The official Tinfoil verifier is pinned to
+`ef79d8ed92a4b5e669c71328caa2b4a9f7931d25`; both upstream replacements in
+`go.mod` are required for its portable dependency graph.
 
 ```sh
-cargo check --workspace --locked
+pnpm install --frozen-lockfile
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+(cd verifier && go test ./... && go vet ./...)
+python3 -m unittest discover -s scripts/tests
+pnpm build && pnpm typecheck && pnpm test
+cargo test -p axiom-web-gateway --locked -- --ignored
+sh scripts/build-container.sh
 ```
 
-There is no executable or inference endpoint yet. The core library exposes the
-shared inference contracts, optional compatibility translator and secure client
-through `inference`, `openai_compat` and `secure_client` modules. This is a
-dependency integration boundary, not a second implementation of those crates.
+The ignored interop test uses the published EHBP JavaScript implementation and
+our SDK transport against the Rust server composition. All fixtures are public
+synthetic data; tests introduce no plaintext inference listener. Policy tests
+inject hardware facts only into an unexported test helper. Production verifiers
+always use the official embedded trust roots and never conformance trust overrides.
 
-## Update shared code once
+`pnpm build` creates `out/axiom-gateway-verify`, the packaged WASM and its matching
+Go runtime, then SDK ESM/types. Browser verification runs in a module worker to
+avoid blocking chat rendering. Bundle the worker, `sdk/wasm` and SDK together;
+serve WASM compressed and cache immutable assets. The uncompressed module is
+about 36 MiB; this is a material initial-download cost, not a prompt transfer.
+Extensions may supply packaged WASM bytes and need normal module-worker/WASM CSP
+support. No remote executable imports or eval are required.
 
-1. Change the owning shared crate in `axiom-desktop`, test its relevant provider
-   and integration behavior and merge into that repository's `dev` branch.
-2. Update all three root Cargo Git revisions to the same reviewed commit. Use a
-   full commit hash; do not track a moving branch for a measured gateway build.
-3. Refresh the lockfile with `cargo check --workspace`, inspect the source and
-   dependency changes, then run the locked checks above.
-4. Once gateway/browser integration exists, qualify upstream changes against the
-   browser channel, platform delegation and failure tests before deployment.
+Container builds vendor locked Cargo dependencies on the build
+host, then build offline. Go public dependencies use their lockfile. No GitHub
+credential is passed through build arguments or layers. Outputs:
+`axiom-web-gateway:dev`, `axiom-gateway-verifier:dev` and `out/build-record.json`. The latter contains a
+CGO-disabled static executable for independently built backend images.
+Runtime bases are digest-pinned. Package installation is not claimed to be
+byte-for-byte reproducible; the measured immutable image covers installed bytes.
 
-During development, Cargo's local patch mechanism may temporarily substitute
-shared crates from a local Desktop checkout. Keep such machine-specific paths
-out of commits and perform final qualification using the pinned remote source.
+An ordinary host cannot open the gateway listener: it lacks fresh valid Tinfoil
+supported CPU evidence, granted keys, signed provenance and backend admission. There is no
+debug/plaintext fallback. Measured Tinfoil config supplies
+`AXIOM_GATEWAY_CONFIG_JSON`; a CLI JSON path is also accepted for diagnostics,
+with identical mandatory attestation checks.
 
-## Branches and releases
-
-The initial/default branch is `dev`. Feature branches and pull requests target
-`dev`. The repository stays private during development. No production branch,
-automatic deployment, scheduled workflow or release tag is created by this
-foundation.
-
-Promotion to `main` and gateway deployments require explicit authorization.
-Future CI should run only required Rust and protocol checks, with caching and
-concurrency cancellation. Measured images and provenance belong in an explicitly
-authorized gateway release pipeline. Building this gateway never requires a
-Desktop version bump or all-platform installer run.
-
-## Evidence for this foundation
-
-Validate Cargo resolution from the pinned public repository rather than a path
-override. Confirm that the dependency graph has one instance of each shared
-Axiom crate, no test-fixture feature and no Desktop, CLI, proxy or installer
-application packages. Successful dependency compilation establishes reuse; it
-does not establish an attested deployment or a working web chat service.
+Development PRs target `dev`. CI runs required checks only and never deploys,
+bumps Desktop versions, or publishes installers. A separately dispatched
+`container-artifacts.yml` builds images, a build record and browser SDK; it does
+not deploy or run on pushes. This public repository also owns the root measured
+`tinfoil-config.yml` and Tinfoil's pinned, manually dispatched release workflows.
+Staging uses `dev` and distinct prerelease tags. Production `main` promotion and
+production deployment require explicit authorization.

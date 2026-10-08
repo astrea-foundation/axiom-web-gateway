@@ -1,0 +1,55 @@
+name: Container artifacts
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: gateway-artifacts-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: verifier/go.mod
+          cache-dependency-path: verifier/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: corepack enable && corepack prepare pnpm@11.22.0 --activate
+      - run: pnpm install --frozen-lockfile && pnpm build
+      - name: Build images and source record
+        env:
+          CONTAINER_ENGINE: docker
+        run: sh scripts/build-container.sh
+      - name: Publish image artifacts
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+          IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+          SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$REGISTRY_USER" --password-stdin
+          docker tag axiom-web-gateway:dev "$IMAGE_PREFIX:build-$SOURCE_REVISION"
+          docker push "$IMAGE_PREFIX:build-$SOURCE_REVISION"
+          docker tag axiom-gateway-verifier:dev "$IMAGE_PREFIX-verifier:build-$SOURCE_REVISION"
+          docker push "$IMAGE_PREFIX-verifier:build-$SOURCE_REVISION"
+          docker image inspect "$IMAGE_PREFIX:build-$SOURCE_REVISION" --format '{{json .RepoDigests}}' > out/runtime-digests.json
+          docker image inspect "$IMAGE_PREFIX-verifier:build-$SOURCE_REVISION" --format '{{json .RepoDigests}}' > out/verifier-digests.json
+      - name: Package browser SDK
+        run: pnpm --dir sdk pack --out ../out/axiom-web-gateway-sdk.tgz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gateway-source-record-and-sdk
+          path: |
+            out/build-record.json
+            out/runtime-digests.json
+            out/verifier-digests.json
+            out/axiom-web-gateway-sdk.tgz
+          retention-days: 14

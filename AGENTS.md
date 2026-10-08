@@ -3,10 +3,11 @@
 ## Workspace and branches
 
 Use `~/sync2/work/axiom-web-gateway` for this checkout. Ongoing development and
-feature pull requests target `dev`. Keep the repository private during
-development; public publication requires explicit authorization. Do not promote
-to `main`, publish a release
-or deploy a production gateway without explicit user authorization. Do not bump
+feature pull requests target `dev`. The user authorized public source and
+Tinfoil deployment configuration in this same repository on 2026-10-06. Keep
+credentials and signing private keys outside Git. Staging measured releases may
+use `dev`; do not promote to `main` or deploy production without explicit user
+authorization. Do not bump
 Desktop versions or trigger Desktop release builds to test gateway work.
 
 ## Ownership and reuse

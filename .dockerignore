@@ -1,0 +1,14 @@
+.git
+target
+node_modules
+sdk/node_modules
+sdk/dist
+sdk/wasm
+out/appliance
+out/*.tar
+out/*.vhd
+.env
+*.pem
+*.key
+**/__pycache__
+**/*.pyc

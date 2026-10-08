@@ -1,0 +1,11 @@
+{
+  "name": "axiom-web-gateway-workspace",
+  "private": true,
+  "packageManager": "pnpm@11.22.0",
+  "scripts": {
+    "build:wasm": "sh scripts/build-wasm.sh",
+    "build": "pnpm build:wasm && pnpm --dir sdk build",
+    "test": "pnpm --dir sdk test",
+    "typecheck": "pnpm --dir sdk typecheck"
+  }
+}
