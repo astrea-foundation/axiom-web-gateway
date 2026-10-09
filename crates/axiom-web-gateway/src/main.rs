@@ -1,4 +1,5 @@
 mod attestation;
+mod lifecycle;
 mod service;
 mod transport;
 mod uploads;
@@ -216,11 +217,14 @@ async fn run() -> Result<()> {
         }
     });
     let refresh_state = Arc::clone(&state);
-    let refresh = tokio::spawn(async move {
-        let mut sequence = policy.sequence;
-        loop {
-            tokio::select! { () = refresh_state.shutdown.cancelled() => break, () = tokio::time::sleep(Duration::from_secs(120)) => {} }
-            let result = tokio::time::timeout(Duration::from_secs(60), async {
+    let refresh = tokio::spawn(lifecycle::refresh_loop(
+        shutdown.clone(),
+        policy.sequence,
+        Duration::from_secs(120),
+        Duration::from_secs(60),
+        move |sequence| {
+            let refresh_state = Arc::clone(&refresh_state);
+            async move {
                 let candidate = collect(
                     &refresh_state.config,
                     &refresh_state.http,
@@ -237,17 +241,11 @@ async fn run() -> Result<()> {
                     &refresh_state.config.publisher_key,
                     "axiom-gateway-policy-v2",
                 )?;
-                sequence = policy.sequence;
                 *refresh_state.collector.write().await = candidate;
-                Ok::<_, anyhow::Error>(())
-            })
-            .await;
-            if !matches!(result, Ok(Ok(()))) {
-                refresh_state.shutdown.cancel();
-                break;
+                Ok(policy.sequence)
             }
-        }
-    });
+        },
+    ));
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     let signal = shutdown.clone();
     tokio::spawn(async move {
@@ -271,7 +269,7 @@ async fn run() -> Result<()> {
         .with_graceful_shutdown(shutdown.clone().cancelled_owned())
         .await?;
     shutdown.cancel();
-    refresh.await?;
+    refresh.await??;
     upload_cleanup.await?;
     Ok(())
 }
