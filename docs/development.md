@@ -1,10 +1,10 @@
 # Development
 
-Use `~/sync2/work/axiom-web-gateway`. Required tools: Rust 1.90+, Go 1.27.1,
+Use `~/sync2/work/axiom-web-gateway`. Required tools: Rust 1.90+, Go 1.27.2,
 Node 24+, pnpm 11.22, OpenSSL and Podman or Docker for packaging. `Cargo.lock`,
 `verifier/go.mod`, `verifier/go.sum` and `pnpm-lock.yaml` pin dependencies.
 No Desktop checkout is required. The official Tinfoil verifier is pinned to
-`ef79d8ed92a4b5e669c71328caa2b4a9f7931d25`; both upstream replacements in
+`31c57af7d7b4fedf1724cb3552924dc6ecebf109`; both upstream replacements in
 `go.mod` are required for its portable dependency graph.
 
 ```sh

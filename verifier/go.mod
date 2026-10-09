@@ -1,6 +1,6 @@
 module github.com/astrea-foundation/axiom-web-gateway/verifier
 
-go 1.27.1
+go 1.27.2
 
 replace github.com/in-toto/in-toto-golang => github.com/tinfoilsh/in-toto-golang v0.0.0-20251028050300-aa5edaf95dd8
 
@@ -9,7 +9,7 @@ replace github.com/google/logger => github.com/tinfoilsh/google-logger v0.0.0-20
 require (
 	github.com/google/go-tdx-guest v0.3.1
 	github.com/tinfoilsh/go-sev-guest v0.0.0-20260818055935-bec7bdb637fd
-	github.com/tinfoilsh/tinfoil-go v0.17.0-rc.1
+	github.com/tinfoilsh/tinfoil-go v0.17.0-rc.1.0.20261009012920-31c57af7d7b4
 )
 
 require (
@@ -73,16 +73,17 @@ require (
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/crypto v0.54.0 // indirect
-	golang.org/x/mod v0.38.0 // indirect
-	golang.org/x/net v0.57.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/term v0.45.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/sync v0.23.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/term v0.46.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260713224248-f5fc221cf8c4 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260713224248-f5fc221cf8c4 // indirect
-	google.golang.org/grpc v1.83.1 // indirect
+	google.golang.org/grpc v1.83.2 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 )

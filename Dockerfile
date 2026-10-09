@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # CPU-only linux/amd64 Tinfoil Container. No Azure SDK or guest appliance.
-FROM docker.io/library/golang@sha256:e114385c58e7280d2f56d6cf374219dda33fef8eb77f72e9f290ccae6160bd90 AS verifier-build
+FROM docker.io/library/golang@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS verifier-build
 WORKDIR /build
 COPY verifier/go.mod verifier/go.sum ./
 RUN go mod download
@@ -23,7 +23,7 @@ COPY --from=verifier-build /axiom-gateway-verify /axiom-gateway-verify
 ENTRYPOINT ["/axiom-gateway-verify"]
 
 FROM docker.io/library/debian@sha256:7792b1f7702a86946cd518db72b6a407302c3e9bc1635634368b878189e8221c AS runtime
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libssl3t64 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libssl3t64 && rm -rf /var/lib/apt/lists/*
 COPY --from=build /build/target/release/axiom-web-gateway /usr/local/bin/axiom-web-gateway
 COPY --from=verifier-build /axiom-gateway-verify /usr/local/bin/axiom-gateway-verify
 USER 10001:10001
