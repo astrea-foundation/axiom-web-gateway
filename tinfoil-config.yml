@@ -40,7 +40,7 @@
   "containers": [
     {
       "name": "gateway",
-      "image": "ghcr.io/astrea-foundation/axiom-web-gateway@sha256:a6536332897d26c2cb5023895e543362bbe4cca970bcd0d6cdf8cf42fbe2f964",
+      "image": "ghcr.io/astrea-foundation/axiom-web-gateway@sha256:97600e96040a7468b56550ddace1d63a11ba8f7b29199f0e450f2474e2d82b9d",
       "user": "10001:10001",
       "attestation": true,
       "keys": [
@@ -52,6 +52,21 @@
         "verification"
       ],
       "restart": "on-failure",
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "curl",
+          "--fail",
+          "--silent",
+          "--max-time",
+          "2",
+          "http://127.0.0.1:8080/healthz"
+        ],
+        "interval": "20s",
+        "timeout": "5s",
+        "retries": 3,
+        "start_period": "120s"
+      },
       "memory": "3072m",
       "pids_limit": 128,
       "env": [
