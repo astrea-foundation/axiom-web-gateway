@@ -55,6 +55,8 @@ def prepare(args):
               "containers": [{"name": "gateway", "image": args.image, "user": "10001:10001",
                               "attestation": True, "keys": ["axiom-encryption", "axiom-authorization"],
                               "read_only": True, "networks": ["verification"], "restart": "on-failure",
+                              "healthcheck": {"test": ["CMD", "curl", "--fail", "--silent", "--max-time", "2", "http://127.0.0.1:8080/healthz"],
+                                              "interval": "20s", "timeout": "5s", "retries": 3, "start_period": "120s"},
                               "memory": "3072m", "pids_limit": 128,
                               "env": [{"AXIOM_GATEWAY_CONFIG_JSON": json.dumps(runtime, separators=(",", ":"))}]}],
               "shim": {"upstream-port": 8080, "upstream-container": "gateway",
