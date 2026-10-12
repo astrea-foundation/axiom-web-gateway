@@ -96,3 +96,14 @@ test('an active response remains protected across idle expiry without extending 
   assert.equal(session.available, false);
   await session.close();
 });
+
+test('expiry between heartbeat scheduling and acquisition fails closed without an unhandled rejection', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let checks = 0;
+  const operations: string[] = [];
+  const session = new SessionLifecycle(true, () => ++checks < 3, async op => { operations.push(op); return { alive: true }; });
+  session.start(); t.mock.timers.tick(0); await settle();
+  assert.equal(session.available, false);
+  assert.deepEqual(operations, []);
+  await session.close();
+});

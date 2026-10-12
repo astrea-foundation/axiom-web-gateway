@@ -34,9 +34,10 @@ export class SessionLifecycle {
   private async beat(): Promise<void> {
     if (this.closed || this.failed || !this.valid() || (this.closing && !this.holds)) return;
     if (!this.idleValid()) { this.failed = true; return; }
-    const leave = this.enter();
+    let leave: (() => void) | undefined;
     const started = Date.now();
     try {
+      leave = this.enter();
       const result = await this.request('heartbeat') as { alive?: boolean };
       if (result?.alive !== true) throw new GatewaySessionError('session_rejected');
       this.acknowledge(started);
@@ -45,7 +46,7 @@ export class SessionLifecycle {
       // An authenticated session rejection makes the next acquisition reconnect.
       if (error instanceof GatewaySessionError) this.failed = true;
     } finally {
-      leave();
+      leave?.();
       if (!this.closed && !this.failed && this.valid()) this.schedule(HEARTBEAT_INTERVAL_MS);
     }
   }
