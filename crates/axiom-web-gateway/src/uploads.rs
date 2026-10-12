@@ -48,6 +48,12 @@ impl Uploads {
     pub fn prune(&mut self, now: u64) {
         self.0.retain(|_, u| u.expires > now);
     }
+    pub fn has_session(&self, session: &str) -> bool {
+        self.0.values().any(|upload| upload.session == session)
+    }
+    pub fn discard_session(&mut self, session: &str) {
+        self.0.retain(|_, upload| upload.session != session);
+    }
     pub fn begin(
         &mut self,
         account: &str,

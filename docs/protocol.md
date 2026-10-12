@@ -51,7 +51,7 @@ account-specific; see [platform delegation](https://github.com/astrea-foundation
 | `GET /healthz` | Public readiness only, available after admission |
 | `POST /v1/attestation` | Public nonce-bound evidence |
 | `POST /v1/session` | One complete EHBP frame containing grant and P-256 DPoP |
-| `POST /v1/rpc` | One EHBP frame containing `models`, strict `infer`, owned `cancel`, or a bounded upload operation |
+| `POST /v1/rpc` | One EHBP frame containing `models`, strict `infer`, owned `cancel`, a bounded upload operation, or negotiated `heartbeat`/`session_close` |
 
 EHBP uses its published X25519/HKDF-SHA256/AES-256-GCM suite and response exporter.
 `Axiom-Encapsulated-Key` and `Axiom-Response-Nonce` carry the normal EHBP values.
@@ -77,6 +77,40 @@ Fresh proof is required every 240 seconds; SDK refreshes it before new RPCs and
 requires reconnect after boot-key rotation. Gateway policy refresh failure
 cancels active work. Account/session quotas, body limits, cancellation and stream
 backpressure remain enforced.
+
+## Session lifecycle
+
+SDK 0.2.3 negotiates lifecycle version 1 in the authenticated session response.
+Its `session_lifecycle` contains a sixty-second heartbeat interval and a
+180-second idle timeout. The first authenticated heartbeat enables the shorter
+idle lease; older SDKs retain their existing absolute session lifetime and do
+not need to send unsupported operations. All traffic uses the same attested
+EHBP key, session DPoP and replay checks. Heartbeats do not extend the fifteen-minute
+delegation, attestation, witness or policy expiry.
+
+An authenticated RPC pins its session through response production, including
+terminal output. Cleanup sweeps every ten seconds and removes expired idle
+sessions. Live RPCs and unexpired pending uploads are protected. Once an account
+has four sessions, a new admitted session replaces its oldest idle session
+without pending uploads. Another account's live session is never displaced;
+when all four sessions are protected, admission returns the encrypted bounded
+`session_capacity` code. The configured global session bound still applies.
+
+`GatewayClient.retain()` holds the original client across a whole reply, including
+uploads and web-tool rounds; its returned callback releases that hold exactly
+once. `close()` is idempotent and defers authenticated `session_close` until
+local RPCs and retained work finish. The gateway stops admitting new work to a
+closing session while allowing owned cancellation, and removes it only after
+its response producers finish. Explicit close also clears leftover session uploads.
+Abrupt browser exits rely on server cleanup rather than an unload notification.
+Heartbeat failures never interrupt an already authenticated active stream.
+
+`available` reports whether the client can accept a new owner; `verify()` refreshes
+fresh evidence while preserving its accepted boot keys and account session.
+Verified key rotation raises `GatewayRestartedError` and requires a new locally
+verified connection. Account grant failures and authenticated session rejection
+have distinct SDK error types; they are not reported as TEE rejection. RPC
+admission errors remain failures even when delivered over successful HTTP/EHBP.
 
 Inference emits an authenticated `accepted` event after validated admission and
 ownership registration. This acknowledges the user message, not a verified
@@ -134,10 +168,14 @@ const gateway = await GatewayClient.connect({
   rememberPolicySequence: saveSequence,
   grant: browserGrant('https://api.example'),
 });
-const result = await gateway.rpc({
-  op: 'infer', request: { model: selectedModel, messages, stream: true },
-}, renderProvisional, { signal: abortController.signal });
-saveVerifiedCompletion(result);
+const release = gateway.retain();
+try {
+  const result = await gateway.rpc({
+    op: 'infer', request: { model: selectedModel, messages, stream: true },
+  }, renderProvisional, { signal: abortController.signal });
+  saveVerifiedCompletion(result);
+} finally { release(); }
+await gateway.close();
 ```
 
 Serve the SDK, module worker, matching Go runtime and WASM as one reviewed bundle.

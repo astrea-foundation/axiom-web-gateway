@@ -8,6 +8,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 test('upload chunks preserve original bytes and bind the eventual request', async () => {
   const operations: any[] = [];
   const client = Object.create(GatewayClient.prototype) as GatewayClient;
+  client.retain = () => () => {};
   client.rpc = async operation => { operations.push(operation); return operation.op === 'upload_begin' ? { upload_id: 'ab'.repeat(16) } : {}; };
   const bytes = crypto.getRandomValues(new Uint8Array(64000));
   const original = new Uint8Array(1048577); for (let i = 0; i < original.length; i++) original[i] = bytes[i % bytes.length]!;
@@ -28,6 +29,7 @@ test('upload chunks preserve original bytes and bind the eventual request', asyn
 });
 test('failed chunks discard session-owned handles and oversized files never dispatch', async () => {
   const operations: any[] = [], client = Object.create(GatewayClient.prototype) as GatewayClient;
+  client.retain = () => () => {};
   client.rpc = async operation => { operations.push(operation); if (operation.op === 'upload_chunk') throw new Error('Interrupted'); return { upload_id: 'ab'.repeat(16) }; };
   const input = { bytes: new Uint8Array([1]), targetRequestId: 'cd'.repeat(16), model: 'model', kind: 'file' as const, name: 'file.txt', mimeType: 'text/plain' };
   await assert.rejects(client.upload(input), /Interrupted/);
