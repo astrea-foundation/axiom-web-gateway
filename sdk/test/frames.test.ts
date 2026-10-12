@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createHash } from 'node:crypto';
 import { PROTOCOL, readFrames } from '../src/frames.js';
+import { GatewaySessionError } from '../src/errors.js';
 const id = 'a'.repeat(32);
 const line = (sequence: number, kind: string, data: unknown, request_id = id) => JSON.stringify({ protocol: PROTOCOL, request_id, sequence, kind, data }) + '\n';
 const first = line(0, 'text_delta', { text: 'secret', provisional: true });
@@ -31,4 +32,13 @@ test('oversized frame fails before a listener receives it', async () => {
 test('an AEAD reader error after terminal still fails completion', async () => {
   const faulty = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new TextEncoder().encode(first + terminal)); }, pull(c) { c.error(new Error('authentication failed')); } });
   await assert.rejects(readFrames(faulty, id, () => {}), /authentication failed/);
+});
+
+test('authenticated session rejection is distinct from TEE failure and cannot emit successful frames', async () => {
+  let seen = false;
+  const rejection = JSON.stringify({ success: false, code: 'session_capacity' }) + '\n';
+  await assert.rejects(readFrames(stream(rejection), id, () => { seen = true; }), error => error instanceof GatewaySessionError && error.code === 'session_capacity');
+  assert.equal(seen, false);
+  await assert.rejects(readFrames(stream(rejection + terminal), id, () => {}), /Invalid gateway framing/);
+  await assert.rejects(readFrames(stream(rejection.slice(0, -1)), id, () => {}), /interrupted/);
 });

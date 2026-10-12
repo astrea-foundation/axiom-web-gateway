@@ -1,4 +1,5 @@
 import { sha256 } from '@noble/hashes/sha2.js';
+import { GatewaySessionError, sessionRejection } from './errors.js';
 
 export const PROTOCOL = 'axiom-gateway-v2';
 const MAX_FRAME = 1024 * 1024;
@@ -26,6 +27,7 @@ export async function readFrames(
   let pending = new Uint8Array(0);
   let total = 0, sequence = 0;
   let terminal: Terminal | undefined;
+  let rejected: GatewaySessionError | undefined;
   try {
     for (;;) {
       const { done, value } = await reader.read();
@@ -37,9 +39,16 @@ export async function readFrames(
       let start = 0;
       for (let end = 0; end < joined.length; end++) {
         if (joined[end] !== 10) continue;
-        if (end - start > MAX_FRAME || terminal) throw new Error('Invalid gateway framing');
+        if (end - start > MAX_FRAME || terminal || rejected) throw new Error('Invalid gateway framing');
         const line = joined.subarray(start, end + 1);
         const frame = JSON.parse(decoder.decode(line)) as Frame;
+        // RPC admission failures are encrypted to this exact EHBP request.
+        // They never contain model output or authorize a successful completion.
+        if (sequence === 0 && Object.keys(frame).length === 2 && (frame as unknown as { success?: boolean }).success === false && Object.hasOwn(frame, 'code')) {
+          rejected = sessionRejection((frame as unknown as { code: unknown }).code);
+          start = end + 1;
+          continue;
+        }
         if (frame.protocol !== PROTOCOL || frame.request_id !== requestId || frame.sequence !== sequence++ ||
             typeof frame.kind !== 'string' || !Object.hasOwn(frame, 'data')) throw new Error('Gateway stream binding failed');
         if (frame.kind === 'terminal') {
@@ -55,7 +64,9 @@ export async function readFrames(
       pending = joined.slice(start);
       if (pending.length > MAX_FRAME) throw new Error('Gateway frame exceeds limit');
     }
-    if (pending.length || !terminal) throw new Error('Gateway stream was interrupted');
+    if (pending.length) throw new Error('Gateway stream was interrupted');
+    if (rejected) throw rejected;
+    if (!terminal) throw new Error('Gateway stream was interrupted');
     return terminal;
   } catch (error) {
     await reader.cancel().catch(() => {});

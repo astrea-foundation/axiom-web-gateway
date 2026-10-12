@@ -1,4 +1,5 @@
 import type { VerifiedGateway } from './index.js';
+import { GatewayRestartedError } from './errors.js';
 
 /** One locally verified refresh at a time for the connection's accepted keys. */
 export class ProofRefresh {
@@ -12,7 +13,7 @@ export class ProofRefresh {
     if (!this.pending) {
       this.pending = this.verify(this.proof.policy_sequence, signal).then(fresh => {
         if (fresh.policy_sequence < this.proof.policy_sequence) throw new Error('Gateway policy rollback rejected');
-        if (fresh.encryption_key !== this.proof.encryption_key || fresh.authorization_key !== this.proof.authorization_key) throw new Error('Gateway restarted; reconnect required');
+        if (fresh.encryption_key !== this.proof.encryption_key || fresh.authorization_key !== this.proof.authorization_key) throw new GatewayRestartedError();
         Object.assign(this.proof, fresh);
       });
     }

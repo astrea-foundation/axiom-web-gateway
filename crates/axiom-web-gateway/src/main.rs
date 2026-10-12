@@ -1,6 +1,7 @@
 mod attestation;
 mod lifecycle;
 mod service;
+mod sessions;
 mod transport;
 mod uploads;
 
@@ -214,6 +215,7 @@ async fn run() -> Result<()> {
         loop {
             tokio::select! { () = upload_state.shutdown.cancelled() => break, () = tokio::time::sleep(Duration::from_secs(10)) => {} }
             upload_state.uploads.lock().await.prune(now());
+            service::prune_sessions(&upload_state).await;
         }
     });
     let refresh_state = Arc::clone(&state);
