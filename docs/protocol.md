@@ -105,6 +105,11 @@ its response producers finish. Explicit close also clears leftover session uploa
 Abrupt browser exits rely on server cleanup rather than an unload notification.
 Heartbeat failures never interrupt an already authenticated active stream.
 
+The SDK also tracks a conservative local idle deadline from successful
+authenticated activity. A sleeping/background tab reconnects before new work
+instead of waiting for its resumed heartbeat to discover an expired server
+session. Receiving a slow response does not extend the locally assumed lease.
+
 `available` reports whether the client can accept a new owner; `verify()` refreshes
 fresh evidence while preserving its accepted boot keys and account session.
 Verified key rotation raises `GatewayRestartedError` and requires a new locally
