@@ -71,6 +71,12 @@ The shim forwards only readiness, evidence, session and RPC paths and configured
 browser origins. The Rust listener is opened only after self-verification and
 backend admission, not merely when the container starts.
 
+The selected production configuration for `v0.1.2` binds the immutable runtime
+image `sha256:7ba75f7cfe44edffd0b82ecac25299b88d495008b960bbe3daaa46af1c52a615` built from promoted source
+`0c7de2f69f618a084aabcd10f6a91a9003e5e1d0`. It includes monotonic policy
+acceptance and verified evidence-expiry enforcement. The browser protocol remains
+compatible with the deployed SDK; the corresponding new SDK is 0.2.2.
+
 ## Release and staged startup
 
 Before creating anything, install the current Tinfoil CLI, run `tinfoil login`
