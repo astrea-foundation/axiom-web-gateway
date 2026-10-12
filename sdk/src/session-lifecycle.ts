@@ -1,6 +1,7 @@
 import { GatewaySessionError } from './errors.js';
 
 export const HEARTBEAT_INTERVAL_MS = 60_000;
+export const SESSION_IDLE_MS = 180_000;
 type Control = 'heartbeat' | 'session_close';
 
 /** In-memory ownership only. Heartbeats never renew account authority or keys. */
@@ -10,6 +11,7 @@ export class SessionLifecycle {
   private closing = false;
   private closed = false;
   private failed = false;
+  private lastActivity = Date.now();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private completion: Promise<void> | undefined;
   private finish: (() => void) | undefined;
@@ -18,7 +20,9 @@ export class SessionLifecycle {
   constructor(private readonly supported: boolean, private readonly valid: () => boolean,
     private readonly request: (op: Control) => Promise<unknown>) {}
 
-  get available(): boolean { return !this.closing && !this.closed && !this.failed && this.valid(); }
+  private idleValid(): boolean { return !this.supported || this.operations > 0 || Date.now() < this.lastActivity + SESSION_IDLE_MS; }
+  get available(): boolean { return !this.closing && !this.closed && !this.failed && this.valid() && this.idleValid(); }
+  acknowledge(startedAt: number): void { this.lastActivity = Math.max(this.lastActivity, startedAt); }
 
   start(): void { if (this.supported && this.available && this.timer === undefined) this.schedule(0); }
 
@@ -29,10 +33,13 @@ export class SessionLifecycle {
 
   private async beat(): Promise<void> {
     if (this.closed || this.failed || !this.valid() || (this.closing && !this.holds)) return;
+    if (!this.idleValid()) { this.failed = true; return; }
     const leave = this.enter();
+    const started = Date.now();
     try {
       const result = await this.request('heartbeat') as { alive?: boolean };
       if (result?.alive !== true) throw new GatewaySessionError('session_rejected');
+      this.acknowledge(started);
     } catch (error) {
       // Transient network failures do not tear down an authenticated reply.
       // An authenticated session rejection makes the next acquisition reconnect.
@@ -44,7 +51,7 @@ export class SessionLifecycle {
   }
 
   enter(): () => void {
-    if (this.closed || this.failed || !this.valid()) throw new GatewaySessionError('session_expired');
+    if (this.closed || this.failed || !this.valid() || !this.idleValid()) throw new GatewaySessionError('session_expired');
     if (this.closing && !this.holds) throw new GatewaySessionError('session_closed');
     this.operations++;
     let released = false;
@@ -55,7 +62,7 @@ export class SessionLifecycle {
   retain(): () => void {
     // A retained reply may start its next upload after replacement was requested.
     // New acquisitions use available; only the existing owner keeps this client.
-    const continuation = this.closing && !this.closed && !this.failed && this.valid() && this.holds > 0;
+    const continuation = this.closing && !this.closed && !this.failed && this.valid() && this.idleValid() && this.holds > 0;
     if (!this.available && !continuation) throw new GatewaySessionError('session_closed');
     this.holds++;
     let released = false;

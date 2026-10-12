@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { GatewaySessionError } from '../src/errors.js';
-import { HEARTBEAT_INTERVAL_MS, SessionLifecycle } from '../src/session-lifecycle.js';
+import { HEARTBEAT_INTERVAL_MS, SESSION_IDLE_MS, SessionLifecycle } from '../src/session-lifecycle.js';
 
 const settle = () => new Promise<void>(resolve => setImmediate(resolve));
 
@@ -71,4 +71,28 @@ test('closing during an in-flight catalog does not race its heartbeat or dispatc
   assert.deepEqual(operations, []);
   leave(); await closing;
   assert.deepEqual(operations, ['session_close']);
+});
+
+test('a sleeping tab detects idle expiry before dispatching new work or a resumed heartbeat', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
+  const operations: string[] = [];
+  const session = new SessionLifecycle(true, () => true, async op => { operations.push(op); return { alive: true, closed: true }; });
+  session.start(); t.mock.timers.tick(0); await settle();
+  assert.equal(session.available, true);
+  t.mock.timers.tick(SESSION_IDLE_MS); await settle();
+  assert.equal(session.available, false);
+  assert.throws(() => session.enter(), GatewaySessionError);
+  assert.deepEqual(operations, ['heartbeat']);
+  await session.close();
+});
+
+test('an active response remains protected across idle expiry without extending the next idle lease', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 0 });
+  const session = new SessionLifecycle(true, () => true, async () => ({ closed: true }));
+  const leave = session.enter();
+  t.mock.timers.setTime(SESSION_IDLE_MS + 1);
+  assert.equal(session.available, true);
+  session.acknowledge(0); leave();
+  assert.equal(session.available, false);
+  await session.close();
 });

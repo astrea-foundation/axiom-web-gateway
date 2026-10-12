@@ -189,6 +189,7 @@ export class GatewayClient {
 
   private async requestRpc(operation: Parameters<GatewayClient['rpc']>[0] | { op: 'heartbeat' | 'session_close' },
     onProvisional: (frame: Frame) => void, options: { signal?: AbortSignal; requestId?: string }): Promise<unknown> {
+    const started = Date.now();
     if (this.expires <= now() || this.proof.policy_expires_at <= now()) throw new GatewaySessionError('session_expired');
     if (this.proof.evidence_expires_at <= now() + 30) {
       await this.proofRefresh.refresh(options.signal);
@@ -206,7 +207,11 @@ export class GatewayClient {
       signal: AbortSignal.any([AbortSignal.timeout(610_000), ...(options.signal ? [options.signal] : [])]),
     });
     GatewayClient.encrypted(response);
-    return (await readFrames(response.body!, requestId, onProvisional)).result;
+    const result = (await readFrames(response.body!, requestId, onProvisional)).result;
+    // Start time is conservative: receiving a slow reply must not extend a
+    // server idle lease after that server has finished producing its response.
+    this.lifecycle.acknowledge(started);
+    return result;
   }
 }
 
