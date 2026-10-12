@@ -43,7 +43,9 @@ byte-for-byte reproducible; the measured immutable image covers installed bytes.
 
 Both Git and the container context exclude `.env`, `.env.*`, private PEM files
 and key files. Keep credentials outside the checkout and build context; an
-untracked file is not automatically excluded from a container build.
+untracked file is not automatically excluded from a container build. The
+recursive environment-file rules also cover nested directories; see Docker's
+[ignore matching rules](https://docs.docker.com/build/concepts/context/#matching).
 
 An ordinary host cannot open the gateway listener: it lacks fresh valid Tinfoil
 supported CPU evidence, granted keys, signed provenance and backend admission. There is no

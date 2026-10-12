@@ -9,6 +9,8 @@ out/*.tar
 out/*.vhd
 .env
 .env.*
+**/.env
+**/.env.*
 *.pem
 *.key
 **/__pycache__
