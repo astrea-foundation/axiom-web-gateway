@@ -30,6 +30,13 @@ floors, VMPL 0, disabled debug and migration, and fully committed firmware
 TCB/build/API versions. TDX additionally requires a non-debug guest and
 UpToDate Intel collateral status.
 
+The application's policy checkpoint must advance atomically across tabs and
+connections. `rememberPolicySequence` may return a promise; the SDK waits for
+that commit and rejects a failed checkpoint before granting or encrypting a
+request. Reject a candidate below the latest committed sequence even when its
+signature and lifetime remain valid. Concurrent RPCs share one verification
+refresh, and a refresh cannot replace an already accepted higher sequence.
+
 The backend invokes the separately packaged static verifier with the current
 first-party policy and a single-use, 60-second admission challenge. Possession
 signatures use `axiom-gateway-register-v2\0 || challenge`. Admission expires at
@@ -61,7 +68,11 @@ and one-use replay ID. Grants last 120 seconds; sessions at most 15 minutes.
 Absolute delegation expiries allow the verifier's 60-second clock tolerance,
 but are capped at the local 240-second admission or 900-second session deadline.
 Expired or excessively future claims are rejected; admission also ends at the
-locally verified policy expiry. Cryptographic freshness checks are unchanged.
+locally verified evidence expiry, including its vendor witness and policy bounds.
+The gateway retains the earliest verified evidence deadline for each local epoch;
+new requests fail at that deadline even if the 240-second epoch has time left.
+An epoch cannot admit requests before its initial hardware verification succeeds.
+Cryptographic freshness checks are unchanged.
 Fresh proof is required every 240 seconds; SDK refreshes it before new RPCs and
 requires reconnect after boot-key rotation. Gateway policy refresh failure
 cancels active work. Account/session quotas, body limits, cancellation and stream

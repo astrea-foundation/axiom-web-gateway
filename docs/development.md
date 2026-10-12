@@ -41,6 +41,10 @@ CGO-disabled static executable for independently built backend images.
 Runtime bases are digest-pinned. Package installation is not claimed to be
 byte-for-byte reproducible; the measured immutable image covers installed bytes.
 
+Both Git and the container context exclude `.env`, `.env.*`, private PEM files
+and key files. Keep credentials outside the checkout and build context; an
+untracked file is not automatically excluded from a container build.
+
 An ordinary host cannot open the gateway listener: it lacks fresh valid Tinfoil
 supported CPU evidence, granted keys, signed provenance and backend admission. There is no
 debug/plaintext fallback. Measured Tinfoil config supplies

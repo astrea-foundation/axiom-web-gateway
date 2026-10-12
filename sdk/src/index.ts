@@ -5,6 +5,7 @@ import { SignJWT } from 'jose';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { PROTOCOL, readFrames, type Frame } from './frames.js';
 import { delegationDeadline } from './expiry.js';
+import { ProofRefresh } from './proof.js';
 export { type Frame } from './frames.js';
 
 const encoder = new TextEncoder();
@@ -48,7 +49,8 @@ export interface GatewayOptions {
   backendOrigin: string;
   /** Persist this independently of gateway responses to prevent policy rollback. */
   minimumPolicySequence?: number;
-  rememberPolicySequence?: (sequence: number) => void;
+  /** Complete an atomic monotonic update; reject if a newer policy was already accepted. */
+  rememberPolicySequence?: (sequence: number) => void | Promise<void>;
   /** Allows extension cookie/session integration without putting credentials in proofs. */
   grant: (publicKey: JsonWebKey, signal?: AbortSignal) => Promise<string>;
   /** Optional packaged WASM bytes for extensions that prohibit fetched executable code. */
@@ -69,18 +71,24 @@ async function attest(options: GatewayOptions, signal?: AbortSignal, minimumSequ
       challenge, origin: options.gatewayOrigin, publisher_key: options.publisherKey,
       now: now(), minimum_policy_sequence: minimumSequence,
     }, options.verifierWasm)) as VerifiedGateway;
-    options.rememberPolicySequence?.(proof.policy_sequence);
+    await options.rememberPolicySequence?.(proof.policy_sequence);
+    deadline.throwIfAborted();
+    if (proof.policy_expires_at <= now() || proof.evidence_expires_at <= now()) throw new Error('Gateway attestation expired');
   return proof;
 }
 
 export class GatewayClient {
   readonly proof: VerifiedGateway;
+  private readonly proofRefresh: ProofRefresh;
   private constructor(
     private readonly options: GatewayOptions, proof: VerifiedGateway,
     private readonly transport: GatewayTransport, private readonly key: CryptoKey,
     private readonly publicKey: JsonWebKey, private readonly session: string,
     private readonly expires: number,
-  ) { this.proof = proof; }
+  ) {
+    this.proof = proof;
+    this.proofRefresh = new ProofRefresh(proof, (minimum, signal) => attest(options, signal, minimum));
+  }
 
   static async connect(options: GatewayOptions, signal?: AbortSignal): Promise<GatewayClient> {
     origin(options.gatewayOrigin); origin(options.backendOrigin);
@@ -147,10 +155,10 @@ export class GatewayClient {
     onProvisional: (frame: Frame) => void = () => {}, options: { signal?: AbortSignal; requestId?: string } = {}): Promise<unknown> {
     if (this.expires <= now() || this.proof.policy_expires_at <= now()) throw new Error('Gateway session expired');
     if (this.proof.evidence_expires_at <= now() + 30) {
-      const fresh = await attest(this.options, options.signal, this.proof.policy_sequence);
-      if (fresh.encryption_key !== this.proof.encryption_key || fresh.authorization_key !== this.proof.authorization_key) throw new Error('Gateway restarted; reconnect required');
-      Object.assign(this.proof, fresh);
+      await this.proofRefresh.refresh(options.signal);
     }
+    if (options.signal?.aborted) options.signal.throwIfAborted();
+    if (this.expires <= now() || this.proof.policy_expires_at <= now() || this.proof.evidence_expires_at <= now()) throw new Error('Gateway session expired');
     const requestId = options.requestId ?? random(16);
     if (!/^[0-9a-f]{32}$/.test(requestId)) throw new Error('Invalid request identity');
     const payload = JSON.stringify({ request_id: requestId, ...operation });
