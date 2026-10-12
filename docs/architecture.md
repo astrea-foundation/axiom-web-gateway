@@ -33,8 +33,11 @@ checks still apply to every supported update.
 Startup loads measured configuration and granted keys, collects evidence, verifies
 locally, and obtains an independently verified backend admission lease before
 opening its listener. Policy/collateral refresh runs every 120 seconds; epochs
-expire after 240 seconds and refresh failure cancels sessions and streams. Browser
-proofs refresh before expiry and reconnect if a boot rotates either accepted key.
+expire at the earliest of 240 seconds, their retained verified witness deadline,
+and policy expiry. Unverified or expired epochs reject new requests. Refresh
+failure cancels sessions and streams. Browser proofs share a single refresh per
+connection, commit a monotonic policy checkpoint before use, and reconnect if a
+boot rotates either accepted key.
 
 ## Reuse and ownership
 
