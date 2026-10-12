@@ -135,17 +135,14 @@ impl Collector {
             "gateway attestation expired"
         );
         // Never extend this epoch past any evidence deadline it accepted.
-        let _ = self.evidence_expires_at.fetch_update(
+        let _ = self.evidence_expires_at.compare_exchange(
+            0,
+            verified.evidence_expires_at,
             Ordering::AcqRel,
             Ordering::Acquire,
-            |previous| {
-                Some(if previous == 0 {
-                    verified.evidence_expires_at
-                } else {
-                    previous.min(verified.evidence_expires_at)
-                })
-            },
         );
+        self.evidence_expires_at
+            .fetch_min(verified.evidence_expires_at, Ordering::AcqRel);
         ensure!(self.is_fresh(), "gateway attestation expired");
         Ok(())
     }
