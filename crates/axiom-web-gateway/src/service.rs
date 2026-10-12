@@ -149,7 +149,7 @@ impl State {
             .context("invalid lease expiry")?;
         let current = now();
         let expires_at =
-            delegation_deadline(remote_expiry, current, 240)?.min(collector.policy_expires_at());
+            delegation_deadline(remote_expiry, current, 240)?.min(collector.evidence_expires_at());
         ensure!(
             token.starts_with("axl_") && expires_at > current,
             "invalid gateway admission"
