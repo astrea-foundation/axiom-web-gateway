@@ -87,8 +87,9 @@ organization must have the Containers product enabled before creating instances.
 Connect the Tinfoil GitHub App to this repository. Commit the generated root
 configuration through a `dev` PR and dispatch its measured release workflow.
 Staging tags keep the `-staging.N` suffix and staging-only runtime settings.
-They must be eligible for GitHub latest in this dedicated gateway repository
-so Tinfoil can publish freshness witnesses. They are unrelated to Desktop
+They require a fresh endorsement for their exact deployment artifact. Preserve
+the production GitHub latest selection when qualifying a staging release in
+this shared gateway repository. These releases are unrelated to Desktop
 releases or platform production promotion:
 
 ```sh
@@ -148,7 +149,7 @@ explicitly non-debug staging instance using its published release:
 ```sh
 tinfoil container hosts
 tinfoil container create axiom-gateway-staging \
-  --repo astrea-foundation/axiom-web-gateway --tag v0.0.1-staging.1 --mark-latest=true \
+  --repo astrea-foundation/axiom-web-gateway --tag v0.0.1-staging.1 --mark-latest=false \
   --custom-domain gateway-staging.example
 tinfoil container get axiom-gateway-staging
 ```
@@ -191,20 +192,36 @@ Sources: [Tinfoil quickstart](https://docs.tinfoil.sh/containers/quickstart),
 
 ### Freshness witness publication
 
-Tinfoil's control plane discovers active configuration repositories and witnesses
-GitHub latest, refreshing it automatically. Non-latest releases are not renewed.
-A new repository containing only GitHub prereleases has no latest and can boot
-while its v3 endpoint returns `attestation_unavailable`: there is no code freshness
-witness. Publish the staging-suffixed gateway tag as a normal release and select
-it as latest when deploying this dedicated gateway staging repository. This does
-not promote platform/desktop `main` or select a Desktop update.
-Select the tag as latest before starting its new instance, after authenticating
-and publishing the signed deployment mapping and policy.
+Tinfoil's control plane discovers active configuration repositories and owns
+fresh endorsement publication and renewal. It can endorse an exact selected
+release without changing GitHub latest. Latest versions renew automatically;
+other selected versions need their own renewal selection and a running replica.
+The dashboard can request a missing, expired or soon-expiring exact endorsement.
+This provider contract supersedes the earlier latest-only staging procedure.
+See the [current official contract](https://github.com/tinfoilsh/freshness-witness).
+
+Publishing a normal staging-suffixed release and verifying its source attestation
+does not alone establish a freshness witness. Preserve production latest during
+staging. Request the exact version's endorsement, then wait for publication
+before starting its newly measured instance. The public workload mapping and
+signed trust policy must also be installed before startup.
 
 Wait for the exact `tinfoil-deployment.json` digest to have a Sigstore freshness
 witness from `tinfoilsh/freshness-witness` and for v3 proof to verify. Do not bypass
 freshness, supply a replacement signer or fall back to the unversioned v2 document.
 A successful VM boot or legacy quote alone cannot qualify the application.
+
+On November 4, `v0.1.3-staging.1` had verified release provenance but no witness
+for artifact digest
+`cf3fd467de99e3a8b24630e1c794aa2dcf26471e99305659f9a2d950c78d8165`.
+The non-debug staging candidate failed application health. A request through
+the dashboard's exact-release refresh API returned HTTP 403, saying fresh
+endorsements require a connected active repository, although container metadata
+reported a connected installation and active repository. Reasserting that
+staging connection did not resolve the refusal. The provider must accept and
+publish an exact endorsement before this staging path can be qualified. The
+missing witness is a concrete verification blocker; application logs from the
+candidate have not established whether another startup fault remains.
 
 ### Application health and verification failures
 
