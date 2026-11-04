@@ -48,6 +48,13 @@ def prepare(args):
                     "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com",
                     "raw.githubusercontent.com", "api.trustedservices.intel.com", "kdsintf.amd.com",
                     "rekor.sigstore.dev", "fulcio.sigstore.dev", "tuf-repo-cdn.sigstore.dev"})
+    direct = getattr(args, "astreaai_staging", False)
+    if direct:
+        if (args.backend_origin != "https://api-staging.axiom.stream"
+                or args.gateway_origin != "https://axiom-gateway-staging.axiomai.containers.tinfoil.dev"
+                or browsers != ["https://auth-staging.axiom.stream"]):
+            raise ValueError("AstreaAI preview requires the isolated staging origins")
+        allow = sorted(set(allow) | {"95-133-254-84.nodes.verda.host", "nras.attestation.nvidia.com"})
     config = {"cvm-version": args.cvm_version, "cpus": 2, "memory": 4096,
               "networks": {"verification": {"egress": "allowlist", "allow": allow}},
               "attested-keys": [{"id": "axiom-encryption", "key": "x25519", "uid": 10001, "gid": 10001},
@@ -61,6 +68,9 @@ def prepare(args):
                               "env": [{"AXIOM_GATEWAY_CONFIG_JSON": json.dumps(runtime, separators=(",", ":"))}]}],
               "shim": {"upstream-port": 8080, "upstream-container": "gateway",
                        "origins": browsers, "paths": ["/healthz", "/v1/attestation", "/v1/session", "/v1/rpc"]}}
+    if direct:
+        config["containers"][0]["env"].append(
+            {"AXIOM_DIRECT_CLIENT_CONFIG_FILE": "/etc/axiom/astreaai-staging.json"})
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
     # JSON is a strict YAML subset, accepted by the canonical Tinfoil parser.
@@ -78,6 +88,7 @@ def main():
     parser.add_argument("--publisher-key", required=True)
     parser.add_argument("--concurrency", type=int, default=32)
     parser.add_argument("--sessions", type=int, default=512)
+    parser.add_argument("--astreaai-staging", action="store_true")
     parser.add_argument("--output", required=True)
     prepare(parser.parse_args())
 

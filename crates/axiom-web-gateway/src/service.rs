@@ -859,6 +859,10 @@ async fn forward(event: ProviderEvent, output: &mut Output, verified: &mut bool)
         ProviderEvent::ToolCallDelta(value) => output.send("tool_call_delta", json!({"index":value.index,"id":value.id,"name":value.name,"arguments":value.arguments})).await?,
         ProviderEvent::Usage { input_tokens, output_tokens } => output.send("usage", json!({"input_tokens":input_tokens,"output_tokens":output_tokens})).await?,
         ProviderEvent::Accounting(value) => output.send("accounting", serde_json::to_value(value)?).await?,
+        ProviderEvent::SecurityEvidence(value) => {
+            ensure!(value.state == SecurityState::Verified, "upstream evidence became unverified");
+            output.send("upstream_proof", serde_json::to_value(value)?).await?;
+        },
         ProviderEvent::Finished(_) | ProviderEvent::SecurityState(_) | ProviderEvent::Status { .. } => {},
     }
     Ok(())

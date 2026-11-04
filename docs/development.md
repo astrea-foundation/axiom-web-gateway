@@ -41,6 +41,21 @@ CGO-disabled static executable for independently built backend images.
 Runtime bases are digest-pinned. Package installation is not claimed to be
 byte-for-byte reproducible; the measured immutable image covers installed bytes.
 
+The shared client pin also supplies its owned SNP/NVIDIA verifier source bundle.
+`scripts/prepare-direct-verifier.py` resolves that bundle from Cargo's locked
+remote dependency and checks every file against its provenance manifest.
+No neighboring checkout or private inference repository is a build input.
+The runtime installs hash-locked Python dependencies, builds the verifier and
+binds its actual executable digest into the image's public AstreaAI staging
+configuration. The file is private to runtime UID 10001 and contains public pins,
+prices and a spending ceiling; account authority always comes from each browser
+session's delegated credential.
+
+Only generated configuration with `--astreaai-staging` enables this provider.
+It requires the existing staging browser, API and gateway origins and permits
+the selected worker's provider DNS name and NVIDIA appraisal endpoint.
+Production configuration has no provider activation environment variable.
+
 Both Git and the container context exclude `.env`, `.env.*`, private PEM files
 and key files. Keep credentials outside the checkout and build context; an
 untracked file is not automatically excluded from a container build. The

@@ -60,7 +60,9 @@ def workload(args):
         expected = prepare.prepare(argparse.Namespace(image=image, cvm_version=config["cvm-version"],
             gateway_origin=runtime["public_origin"], backend_origin=runtime["backend_origin"],
             browser_origin=runtime["browser_origins"], publisher_key=runtime["publisher_key"],
-            concurrency=runtime["max_concurrency"], sessions=runtime["max_sessions"], output=output))
+            concurrency=runtime["max_concurrency"], sessions=runtime["max_sessions"], output=output,
+            astreaai_staging={"AXIOM_DIRECT_CLIENT_CONFIG_FILE": "/etc/axiom/astreaai-staging.json"}
+                in containers[0]["env"]))
     if expected != config:
         raise ValueError("release config differs from the restricted generated topology")
     public = subprocess.check_output(["openssl", "pkey", "-in", args.key, "-pubout", "-outform", "DER"])
