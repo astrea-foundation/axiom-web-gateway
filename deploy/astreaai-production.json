@@ -1,5 +1,5 @@
 {
-  "origin": "https://axiom-worker.invalid:8443",
+  "origin": "https://worker.axiom.stream:8443",
   "connect_ip": "95.133.254.84",
   "model_manifest": "70f4574bcec58ecc53c5e30680eaed1b29423de013ad743474781252fefeb4fe",
   "verifier": {
