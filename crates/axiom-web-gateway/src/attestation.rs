@@ -156,6 +156,7 @@ impl Collector {
             self.epoch_is_fresh_at(crate::now()),
             "attestation epoch expired"
         );
+        crate::startup::phase("proof-document");
         let document = tokio::time::timeout(
             Duration::from_secs(20),
             local_document(&self.socket, &challenge),
@@ -180,7 +181,9 @@ impl Collector {
         };
         let raw = serde_json::to_vec(&serde_json::json!({"evidence":evidence,"context":context}))?;
         ensure!(raw.len() <= MAX_EVIDENCE_BYTES, "attestation exceeds limit");
+        crate::startup::phase("proof-verifier");
         let verified = verify_process(&self.verifier, &raw).await?;
+        crate::startup::phase("proof-binding");
         self.accept_verified(&verified)?;
         Ok(evidence)
     }

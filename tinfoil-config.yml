@@ -6,7 +6,8 @@
     "verification": {
       "egress": "allowlist",
       "allow": [
-        "api.axiom.stream",
+        "95-133-254-84.nodes.verda.host",
+        "api-staging.axiom.stream",
         "api.github.com",
         "api.trustedservices.intel.com",
         "fulcio.sigstore.dev",
@@ -15,6 +16,7 @@
         "inference.tinfoil.sh",
         "kds-proxy.tinfoil.sh",
         "kdsintf.amd.com",
+        "nras.attestation.nvidia.com",
         "objects.githubusercontent.com",
         "raw.githubusercontent.com",
         "rekor.sigstore.dev",
@@ -40,7 +42,7 @@
   "containers": [
     {
       "name": "gateway",
-      "image": "ghcr.io/astrea-foundation/axiom-web-gateway@sha256:7ba75f7cfe44edffd0b82ecac25299b88d495008b960bbe3daaa46af1c52a615",
+      "image": "ghcr.io/astrea-foundation/axiom-web-gateway@sha256:1c703aa94efbdb41d4f37e6d71352c2bf6fa1144cfe268a5667a6d6122154367",
       "user": "10001:10001",
       "attestation": true,
       "keys": [
@@ -71,7 +73,10 @@
       "pids_limit": 128,
       "env": [
         {
-          "AXIOM_GATEWAY_CONFIG_JSON": "{\"listen\":\"0.0.0.0:8080\",\"public_origin\":\"https://axiom-gateway.axiomai.containers.tinfoil.dev\",\"backend_origin\":\"https://api.axiom.stream\",\"publisher_key\":\"c14866d87b4feb6ba248a6ffe314c6cf835117c995332c350930105990de83d7\",\"browser_origins\":[\"https://auth.axiom.stream\"],\"max_concurrency\":32,\"max_sessions\":512,\"attestation_socket\":\"/tinfoil/attestation.sock\",\"encryption_key_path\":\"/run/tinfoil/keys/axiom-encryption/private_key.pem\",\"authorization_key_path\":\"/run/tinfoil/keys/axiom-authorization/private_key.pem\",\"verifier\":\"/usr/local/bin/axiom-gateway-verify\"}"
+          "AXIOM_GATEWAY_CONFIG_JSON": "{\"listen\":\"0.0.0.0:8080\",\"public_origin\":\"https://axiom-gateway-staging.axiomai.containers.tinfoil.dev\",\"backend_origin\":\"https://api-staging.axiom.stream\",\"publisher_key\":\"300837e170446ffe8d6caf4bef6aa5dc933ebcdcbc87e6d206d1922974cd23c9\",\"browser_origins\":[\"https://auth-staging.axiom.stream\"],\"max_concurrency\":8,\"max_sessions\":64,\"attestation_socket\":\"/tinfoil/attestation.sock\",\"encryption_key_path\":\"/run/tinfoil/keys/axiom-encryption/private_key.pem\",\"authorization_key_path\":\"/run/tinfoil/keys/axiom-authorization/private_key.pem\",\"verifier\":\"/usr/local/bin/axiom-gateway-verify\"}"
+        },
+        {
+          "AXIOM_DIRECT_CLIENT_CONFIG_FILE": "/etc/axiom/astreaai-staging.json"
         }
       ]
     }
@@ -80,7 +85,7 @@
     "upstream-port": 8080,
     "upstream-container": "gateway",
     "origins": [
-      "https://auth.axiom.stream"
+      "https://auth-staging.axiom.stream"
     ],
     "paths": [
       "/healthz",

@@ -20,9 +20,19 @@ def load(name):
 
 prepare = load("prepare-tinfoil")
 publisher = load("publish-documents")
+health = load("check-gateway-health")
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_health_diagnostics_never_echo_unknown_or_oversized_content(self):
+        with tempfile.TemporaryDirectory() as output:
+            status = Path(output) / "status"
+            for value in [b"synthetic-private-content", b"keys" + b" " * 100, b"\xff"]:
+                status.write_bytes(value)
+                self.assertEqual(health.phase(status), "initializing")
+            status.write_text("backend-admission")
+            self.assertEqual(health.phase(status), "backend-admission")
+
     def args(self, output):
         return argparse.Namespace(image="ghcr.io/astrea-foundation/axiom-web-gateway@sha256:" + "12" * 32,
                                   publisher_key="34" * 32, cvm_version="0.14.13",
@@ -62,6 +72,42 @@ class DeploymentTests(unittest.TestCase):
                     setattr(args, field, value)
                     with self.assertRaises(ValueError):
                         prepare.prepare(args)
+
+    def test_astreaai_staging_rejects_production_origins(self):
+        with tempfile.TemporaryDirectory() as output:
+            args = self.args(output)
+            args.astreaai_staging = True
+            with self.assertRaises(ValueError):
+                prepare.prepare(args)
+            args.backend_origin = "https://api-staging.axiom.stream"
+            args.gateway_origin = "https://axiom-gateway-staging.axiomai.containers.tinfoil.dev"
+            args.browser_origin = ["https://auth-staging.axiom.stream"]
+            config = prepare.prepare(args)
+            self.assertIn({"AXIOM_DIRECT_CLIENT_CONFIG_FILE": "/etc/axiom/astreaai-staging.json"},
+                          config["containers"][0]["env"])
+            self.assertTrue({"95-133-254-84.nodes.verda.host", "nras.attestation.nvidia.com"}
+                            <= set(config["networks"]["verification"]["allow"]))
+            args.backend_origin = "https://api.axiom.stream"
+            with self.assertRaises(ValueError):
+                prepare.prepare(args)
+
+    def test_astreaai_production_rejects_mixed_environment_and_flags(self):
+        with tempfile.TemporaryDirectory() as output:
+            args = self.args(output)
+            args.astreaai_production = True
+            args.backend_origin = "https://api.axiom.stream"
+            args.gateway_origin = "https://axiom-gateway.axiomai.containers.tinfoil.dev"
+            args.browser_origin = ["https://auth.axiom.stream"]
+            config = prepare.prepare(args)
+            self.assertIn({"AXIOM_DIRECT_CLIENT_CONFIG_FILE": "/etc/axiom/astreaai-production.json"},
+                          config["containers"][0]["env"])
+            args.browser_origin = ["https://auth-staging.axiom.stream"]
+            with self.assertRaises(ValueError):
+                prepare.prepare(args)
+            args.browser_origin = ["https://auth.axiom.stream"]
+            args.astreaai_staging = True
+            with self.assertRaises(ValueError):
+                prepare.prepare(args)
 
     def test_offline_publisher_signatures_are_domain_separated(self):
         with tempfile.TemporaryDirectory() as output:

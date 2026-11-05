@@ -48,6 +48,18 @@ def prepare(args):
                     "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com",
                     "raw.githubusercontent.com", "api.trustedservices.intel.com", "kdsintf.amd.com",
                     "rekor.sigstore.dev", "fulcio.sigstore.dev", "tuf-repo-cdn.sigstore.dev"})
+    staging = getattr(args, "astreaai_staging", False)
+    production = getattr(args, "astreaai_production", False)
+    if staging and production:
+        raise ValueError("one AstreaAI environment required")
+    direct = staging or production
+    if direct:
+        suffix = "-staging" if staging else ""
+        if (args.backend_origin != f"https://api{suffix}.axiom.stream"
+                or args.gateway_origin != f"https://axiom-gateway{suffix}.axiomai.containers.tinfoil.dev"
+                or browsers != [f"https://auth{suffix}.axiom.stream"]):
+            raise ValueError("AstreaAI requires its selected environment's exact origins")
+        allow = sorted(set(allow) | {"95-133-254-84.nodes.verda.host", "nras.attestation.nvidia.com"})
     config = {"cvm-version": args.cvm_version, "cpus": 2, "memory": 4096,
               "networks": {"verification": {"egress": "allowlist", "allow": allow}},
               "attested-keys": [{"id": "axiom-encryption", "key": "x25519", "uid": 10001, "gid": 10001},
@@ -55,12 +67,16 @@ def prepare(args):
               "containers": [{"name": "gateway", "image": args.image, "user": "10001:10001",
                               "attestation": True, "keys": ["axiom-encryption", "axiom-authorization"],
                               "read_only": True, "networks": ["verification"], "restart": "on-failure",
-                              "healthcheck": {"test": ["CMD", "curl", "--fail", "--silent", "--max-time", "2", "http://127.0.0.1:8080/healthz"],
+                              "healthcheck": {"test": ["CMD", "/usr/local/bin/axiom-gateway-health"],
                                               "interval": "20s", "timeout": "5s", "retries": 3, "start_period": "120s"},
                               "memory": "3072m", "pids_limit": 128,
                               "env": [{"AXIOM_GATEWAY_CONFIG_JSON": json.dumps(runtime, separators=(",", ":"))}]}],
               "shim": {"upstream-port": 8080, "upstream-container": "gateway",
                        "origins": browsers, "paths": ["/healthz", "/v1/attestation", "/v1/session", "/v1/rpc"]}}
+    if direct:
+        config["containers"][0]["env"].append(
+            {"AXIOM_DIRECT_CLIENT_CONFIG_FILE": "/etc/axiom/astreaai-" +
+                ("staging" if staging else "production") + ".json"})
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
     # JSON is a strict YAML subset, accepted by the canonical Tinfoil parser.
@@ -78,6 +94,9 @@ def main():
     parser.add_argument("--publisher-key", required=True)
     parser.add_argument("--concurrency", type=int, default=32)
     parser.add_argument("--sessions", type=int, default=512)
+    direct = parser.add_mutually_exclusive_group()
+    direct.add_argument("--astreaai-staging", action="store_true")
+    direct.add_argument("--astreaai-production", action="store_true")
     parser.add_argument("--output", required=True)
     prepare(parser.parse_args())
 
