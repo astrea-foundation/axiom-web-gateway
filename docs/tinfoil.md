@@ -225,6 +225,14 @@ candidate have not established whether another startup fault remains.
 
 ### Application health and verification failures
 
+If a failed workload healthcheck also prevents the provider's debug SSH route
+from opening, use a disposable diagnostic staging release with that workload
+paused and its application healthcheck omitted. This bootstraps only the debug
+toolbox, with no account credentials or inference traffic. Inspect the original
+entrypoint manually inside that copy. Restore the normal selected configuration
+on `dev` immediately after tagging the diagnostic configuration. Do not sign an
+Axiom admission mapping for the paused workload or use it for browser chat.
+
 Tinfoil's instance state describes the confidential VM. A Running VM can have
 an unavailable gateway process; check `/healthz` and fresh `/v1/attestation`
 evidence as well. Generated configurations declare a loopback HTTP healthcheck
