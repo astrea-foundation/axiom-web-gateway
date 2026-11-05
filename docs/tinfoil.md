@@ -264,6 +264,25 @@ process-framing regression checks EOF delivery; it does not mock live hardware
 qualification. Backend runtime roles also need the documented gateway table
 grants before admission can succeed.
 
+## AstreaAI production configuration
+
+The runtime includes separate public AstreaAI account configurations for staging
+and production. The image build binds both to the digest of its independently
+built verifier. Generate a production deployment with `--astreaai-production`;
+this option requires the exact production gateway, API and browser origins and
+cannot be combined with `--astreaai-staging`. The measured deployment selects
+`/etc/axiom/astreaai-production.json`, the production account issuer and immutable
+production price versions. No grant-issuer private key is included in the image.
+
+A production candidate must use an immutable image built from promoted main
+source, authenticated release measurements and a publisher-signed source mapping.
+Keep the previous production instance available while qualifying the candidate.
+The normal latest-release publication path may request its fresh endorsement;
+publication alone does not establish that the nonce-based hardware proof, key
+binding, account delegation and authenticated browser inference work. Verify the
+new normal instance before switching traffic. Do not accept unavailable vendor
+material or legacy CPU-only evidence as a substitute for that qualification.
+
 ## Shared-chat staging workload
 
 The staging configuration selects the immutable upload-capable runtime from
