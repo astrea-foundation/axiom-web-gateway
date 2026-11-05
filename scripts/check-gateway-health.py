@@ -7,7 +7,7 @@ import urllib.request
 PHASES = frozenset({
     "configuration", "keys", "http-client", "vendor-document", "code-reference",
     "source-manifest", "trust-policy", "policy-signature", "collector",
-    "proof-document", "proof-verifier", "proof-binding", "backend-admission",
+    "proof-document", "proof-verifier", "proof-binding", "backend-admission", "backend-register", "backend-lease",
     "listener", "ready",
 })
 
