@@ -2,6 +2,7 @@ mod attestation;
 mod lifecycle;
 mod service;
 mod sessions;
+mod startup;
 mod transport;
 mod uploads;
 
@@ -79,6 +80,7 @@ async fn collect(
     minimum_sequence: u64,
 ) -> Result<Arc<attestation::Collector>> {
     let nonce = hex::encode(rand::random::<[u8; 32]>());
+    startup::phase("vendor-document");
     let local = tokio::time::timeout(
         Duration::from_secs(20),
         attestation::local_document(&config.attestation_socket, &nonce),
@@ -86,6 +88,7 @@ async fn collect(
     .await??;
     // A lookup hint only. The verifier authenticates this digest and measurement
     // against the signed release and running CPU quote before opening a listener.
+    startup::phase("code-reference");
     let entries = local["collateral"]
         .as_array()
         .context("missing collateral")?;
@@ -103,6 +106,7 @@ async fn collect(
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
         "invalid config digest"
     );
+    startup::phase("source-manifest");
     let manifest = document::<SignedDocument>(
         client,
         format!(
@@ -111,17 +115,20 @@ async fn collect(
         ),
     )
     .await?;
+    startup::phase("trust-policy");
     let policy = document::<SignedDocument>(
         client,
         format!("{}/api/v1/web-gateway/trust-policy", config.backend_origin),
     )
     .await?;
+    startup::phase("policy-signature");
     let trusted: TrustPolicy =
         verify_document(&policy, &config.publisher_key, "axiom-gateway-policy-v2")?;
     ensure!(
         trusted.sequence >= minimum_sequence,
         "gateway trust policy rollback"
     );
+    startup::phase("collector");
     attestation::Collector::new(
         config,
         identity.public_hex.clone(),
@@ -136,12 +143,19 @@ async fn collect(
 async fn main() {
     if run().await.is_err() {
         eprintln!("gateway startup or runtime verification failed");
+        if !startup::is_ready() {
+            // Keep a failed startup alive long enough for Docker's configured
+            // start grace and health retries to expose the static phase. No
+            // listener has opened. Runtime failures still exit immediately.
+            tokio::time::sleep(Duration::from_secs(240)).await;
+        }
         std::process::exit(1);
     }
 }
 
 #[allow(clippy::too_many_lines)] // Startup must show the ordering before the listener is opened.
 async fn run() -> Result<()> {
+    startup::phase("configuration");
     let path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "/etc/axiom-gateway/config.json".into());
@@ -168,6 +182,7 @@ async fn run() -> Result<()> {
         "invalid publisher key"
     );
     // No tracing subscriber: failures expose only the constant above.
+    startup::phase("keys");
     let identity = Arc::new(transport::Identity::load(Path::new(
         &config.encryption_key_path,
     ))?);
@@ -175,6 +190,7 @@ async fn run() -> Result<()> {
         zeroize::Zeroizing::new(std::fs::read_to_string(&config.authorization_key_path)?);
     ensure!(signing_pem.len() <= 4096, "private key exceeds limit");
     let authorization_key = ed25519_dalek::SigningKey::from_pkcs8_pem(&signing_pem)?;
+    startup::phase("http-client");
     let http = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
@@ -209,6 +225,7 @@ async fn run() -> Result<()> {
         shutdown: shutdown.clone(),
     });
     // No listener until hardware/workload self-verification and attested backend admission pass.
+    startup::phase("backend-admission");
     state.lease().await?;
     let upload_state = Arc::clone(&state);
     let upload_cleanup = tokio::spawn(async move {
@@ -248,7 +265,10 @@ async fn run() -> Result<()> {
             }
         },
     ));
+    startup::phase("listener");
+    let router = service::router(Arc::clone(&state))?;
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
+    startup::ready();
     let signal = shutdown.clone();
     tokio::spawn(async move {
         #[cfg(unix)]
@@ -267,7 +287,7 @@ async fn run() -> Result<()> {
         }
         signal.cancel();
     });
-    axum::serve(listener, service::router(Arc::clone(&state))?)
+    axum::serve(listener, router)
         .with_graceful_shutdown(shutdown.clone().cancelled_owned())
         .await?;
     shutdown.cancel();

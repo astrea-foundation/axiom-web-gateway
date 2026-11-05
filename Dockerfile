@@ -44,6 +44,7 @@ COPY --from=direct-verifier --chown=10001:10001 /etc/axiom/astreaai-staging.json
 COPY --from=direct-verifier --chown=10001:10001 /etc/axiom/astreaai-production.json /etc/axiom/astreaai-production.json
 COPY --from=build /build/target/release/axiom-web-gateway /usr/local/bin/axiom-web-gateway
 COPY --from=verifier-build /axiom-gateway-verify /usr/local/bin/axiom-gateway-verify
+COPY --chmod=0555 scripts/check-gateway-health.py /usr/local/bin/axiom-gateway-health
 USER 10001:10001
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/axiom-web-gateway"]
