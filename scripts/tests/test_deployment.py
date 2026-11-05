@@ -20,9 +20,19 @@ def load(name):
 
 prepare = load("prepare-tinfoil")
 publisher = load("publish-documents")
+health = load("check-gateway-health")
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_health_diagnostics_never_echo_unknown_or_oversized_content(self):
+        with tempfile.TemporaryDirectory() as output:
+            status = Path(output) / "status"
+            for value in [b"synthetic-private-content", b"keys" + b" " * 100, b"\xff"]:
+                status.write_bytes(value)
+                self.assertEqual(health.phase(status), "initializing")
+            status.write_text("backend-admission")
+            self.assertEqual(health.phase(status), "backend-admission")
+
     def args(self, output):
         return argparse.Namespace(image="ghcr.io/astrea-foundation/axiom-web-gateway@sha256:" + "12" * 32,
                                   publisher_key="34" * 32, cvm_version="0.14.13",

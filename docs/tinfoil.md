@@ -266,6 +266,14 @@ grants before admission can succeed.
 
 ## AstreaAI production configuration
 
+The image health helper checks the actual `/healthz` readiness response. A
+failed check exposes only a finite startup phase from the container's private
+RAM mount. Startup failure keeps the process alive for at most four minutes so
+Docker can publish that phase through its configured health grace/retries;
+inference remains unavailable throughout. A failure after readiness exits
+immediately for normal restart handling. No exception text, credentials, keys,
+prompts or responses are written to the startup status file or health output.
+
 The runtime includes separate public AstreaAI account configurations for staging
 and production. The image build binds both to the digest of its independently
 built verifier. Generate a production deployment with `--astreaai-production`;
