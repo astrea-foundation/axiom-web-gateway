@@ -1,5 +1,5 @@
 import { sha256 } from '@noble/hashes/sha2.js';
-import { GatewaySessionError, sessionRejection } from './errors.js';
+import { GatewaySessionError, sessionRejection, requestFailure } from './errors.js';
 
 export const PROTOCOL = 'axiom-gateway-v2';
 const MAX_FRAME = 1024 * 1024;
@@ -14,6 +14,7 @@ export interface Frame {
   data: unknown;
 }
 export interface Terminal { success: true; transcript_sha256: string; result: unknown }
+interface FailureTerminal { success: false; transcript_sha256: string; result: unknown }
 
 /** Input must already be AEAD-authenticated by EHBP. Deltas remain provisional;
  * success is returned only after terminal binding AND authenticated EOF. */
@@ -26,7 +27,7 @@ export async function readFrames(
   const digest = sha256.create();
   let pending = new Uint8Array(0);
   let total = 0, sequence = 0;
-  let terminal: Terminal | undefined;
+  let terminal: Terminal | FailureTerminal | undefined;
   let rejected: GatewaySessionError | undefined;
   try {
     for (;;) {
@@ -52,8 +53,8 @@ export async function readFrames(
         if (frame.protocol !== PROTOCOL || frame.request_id !== requestId || frame.sequence !== sequence++ ||
             typeof frame.kind !== 'string' || !Object.hasOwn(frame, 'data')) throw new Error('Gateway stream binding failed');
         if (frame.kind === 'terminal') {
-          const data = frame.data as Terminal;
-          if (data?.success !== true || data.transcript_sha256 !== hex(digest.digest())) throw new Error('Gateway completion failed');
+          const data = frame.data as Terminal | FailureTerminal;
+          if ((data?.success !== true && data?.success !== false) || data.transcript_sha256 !== hex(digest.digest())) throw new Error('Gateway completion failed');
           terminal = data;
         } else {
           digest.update(line);
@@ -67,6 +68,7 @@ export async function readFrames(
     if (pending.length) throw new Error('Gateway stream was interrupted');
     if (rejected) throw rejected;
     if (!terminal) throw new Error('Gateway stream was interrupted');
+    if (!terminal.success) throw requestFailure(terminal.result);
     return terminal;
   } catch (error) {
     await reader.cancel().catch(() => {});

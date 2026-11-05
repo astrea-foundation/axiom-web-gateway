@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createHash } from 'node:crypto';
 import { PROTOCOL, readFrames } from '../src/frames.js';
-import { GatewaySessionError } from '../src/errors.js';
+import { GatewaySessionError, GatewayRequestError } from '../src/errors.js';
 const id = 'a'.repeat(32);
 const line = (sequence: number, kind: string, data: unknown, request_id = id) => JSON.stringify({ protocol: PROTOCOL, request_id, sequence, kind, data }) + '\n';
 const first = line(0, 'text_delta', { text: 'secret', provisional: true });
@@ -32,6 +32,16 @@ test('oversized frame fails before a listener receives it', async () => {
 test('an AEAD reader error after terminal still fails completion', async () => {
   const faulty = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new TextEncoder().encode(first + terminal)); }, pull(c) { c.error(new Error('authentication failed')); } });
   await assert.rejects(readFrames(faulty, id, () => {}), /authentication failed/);
+});
+
+test('request failures require transcript binding and authenticated EOF, with bounded metadata', async () => {
+  const failure = line(1,'terminal',{success:false,transcript_sha256:digest,result:{code:'RATE_LIMITED',stage:'capacity',retry_at:123}});
+  await assert.rejects(readFrames(stream(first+failure),id,()=>{}),error=>error instanceof GatewayRequestError && error.code==='RATE_LIMITED' && error.stage==='capacity');
+  await assert.rejects(readFrames(stream(first+failure.replace(digest,'0'.repeat(64))),id,()=>{}),error=>!(error instanceof GatewayRequestError));
+  const unknown = line(1,'terminal',{success:false,transcript_sha256:digest,result:{code:'private error text',stage:'private input text'}});
+  await assert.rejects(readFrames(stream(first+unknown),id,()=>{}),error=>error instanceof GatewayRequestError && !error.message.includes('private'));
+  const faulty = new ReadableStream<Uint8Array>({start(c){c.enqueue(new TextEncoder().encode(first+failure));},pull(c){c.error(new Error('authentication failed'));}});
+  await assert.rejects(readFrames(faulty,id,()=>{}),/authentication failed/);
 });
 
 test('authenticated session rejection is distinct from TEE failure and cannot emit successful frames', async () => {
