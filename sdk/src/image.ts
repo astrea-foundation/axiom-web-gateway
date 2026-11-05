@@ -46,8 +46,15 @@ export async function requestImage(client: GatewayClient, options: Options, prog
             previous && (stages.indexOf(next.stage)<stages.indexOf(previous.stage) || next.percent<previous.percent)) throw new Error('Invalid image progress');
         previous = next; progress?.(next);
       }
-    }, { ...(signal ? { signal } : {}), requestId }) as { upstream_response_verified?: boolean; image?: Omit<GatewayImage,'data'>; image_data_length?: number };
-    const image = value.image;
+    }, { ...(signal ? { signal } : {}), requestId }) as { upstream_response_verified?: boolean; image?: {
+      requestId:string;mimeType:GatewayImage['mime_type'];width:number;height:number;sha256:string;
+      sourceImageIds?:string[];chatModelId?:string;evidence:Record<string,unknown>;usage:Record<string,unknown>;
+    }; image_data_length?: number };
+    // GeneratedImage is the shared native client's camelCase serde contract.
+    // Normalize only its field names; every content/authority check stays below.
+    const wire=value.image;
+    const image=wire?{request_id:wire.requestId,mime_type:wire.mimeType,width:wire.width,height:wire.height,sha256:wire.sha256,
+      source_image_ids:wire.sourceImageIds??[],...(wire.chatModelId?{chat_model_id:wire.chatModelId}:{}),evidence:wire.evidence,usage:wire.usage}:undefined;
     if (value.upstream_response_verified !== true || !image || value.image_data_length !== length || !length ||
         !['image/png','image/jpeg'].includes(image.mime_type) || !/^[a-f0-9]{64}$/.test(image.sha256) ||
         !Number.isInteger(image.width) || !Number.isInteger(image.height) || image.width<=0 || image.height<=0 || image.width*image.height>2359296 ||
