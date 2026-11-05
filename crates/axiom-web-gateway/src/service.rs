@@ -11,7 +11,7 @@ use axiom_gateway_protocol::{
     authorization::{self, BrowserKey},
 };
 use axiom_web_gateway_core::{
-    inference::{InferenceRequest, ProviderEvent},
+    inference::{ImageDimensions, ImageGenerationRequest, InferenceRequest, ProviderEvent},
     openai_compat::{ChatCompletionRequest, CompatMode},
     secure_client::{ApiCredential, SecureClient, SecureClientConfig, SecurityState},
 };
@@ -28,7 +28,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
-use tokio::sync::{Mutex, RwLock, Semaphore, mpsc};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, Semaphore, mpsc};
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
@@ -99,6 +99,15 @@ enum Operation {
     Heartbeat,
     SessionClose,
     Models,
+    ImageCapabilities,
+    Image {
+        model: String,
+        prompt: String,
+        #[serde(default)]
+        references: Vec<crate::uploads::ImageReference>,
+        dimensions: Option<ImageDimensions>,
+        aspect_ratio: Option<String>,
+    },
     Infer {
         request: Box<ChatCompletionRequest>,
         #[serde(default)]
@@ -203,6 +212,7 @@ impl State {
             .to_owned();
         let collector = Arc::clone(&*self.collector.read().await);
         let evidence = collector.proof(challenge.clone()).await?;
+        crate::startup::phase("backend-register");
         let signature = self.sign(b"axiom-gateway-register-v2", challenge.as_bytes());
         let value = self
             .backend(
@@ -211,6 +221,7 @@ impl State {
                 None,
             )
             .await?;
+        crate::startup::phase("backend-lease");
         let token = value["lease"]
             .as_str()
             .context("invalid gateway lease")?
@@ -559,11 +570,14 @@ async fn rpc(
             Ok(Ok(value)) if !cancellation.is_cancelled() => {
                 let _ = output.terminal(true, value).await;
             }
-            _ => {
+            failure => {
+                let error = match &failure {
+                    Ok(Err(error)) => Some(error),
+                    _ => None,
+                };
+                let result = request_failure(error, cancellation.is_cancelled());
                 cancellation.cancel();
-                let _ = output
-                    .terminal(false, json!({"code":"request_failed"}))
-                    .await;
+                let _ = output.terminal(false, result).await;
             }
         }
     });
@@ -711,6 +725,73 @@ async fn execute(
             output.send("models", serde_json::to_value(models)?).await?;
             Ok(json!({}))
         }
+        Operation::ImageCapabilities => {
+            let runtime = session
+                .client
+                .image_capabilities(cancellation.clone())
+                .await
+                .context(RequestPhase::UpstreamAttestation)?;
+            Ok(json!({"capabilities":runtime}))
+        }
+        Operation::Image {
+            model,
+            prompt,
+            references,
+            dimensions,
+            aspect_ratio,
+        } => {
+            ensure!(
+                !prompt.trim().is_empty() && prompt.len() <= 8192,
+                "invalid image prompt"
+            );
+            ensure!(
+                dimensions.is_none() || aspect_ratio.is_none(),
+                "choose dimensions or aspect ratio"
+            );
+            let _permit = admit_execution(
+                state,
+                session,
+                &payload.request_id,
+                owner,
+                cancellation,
+                output,
+            )
+            .await?;
+            let references = state
+                .uploads
+                .lock()
+                .await
+                .image_references(
+                    &session.account,
+                    &session.id,
+                    &payload.request_id,
+                    &model,
+                    &references,
+                    now(),
+                )
+                .context(RequestPhase::UploadBinding)?;
+            let dimensions = if let Some(aspect) = aspect_ratio {
+                ensure!(aspect.len() <= 16, "invalid image aspect ratio");
+                let runtime = session
+                    .client
+                    .image_capabilities(cancellation.clone())
+                    .await
+                    .context(RequestPhase::UpstreamAttestation)?;
+                Some(runtime.dimensions(&aspect).map_err(anyhow::Error::msg)?)
+            } else {
+                dimensions
+            };
+            image_operation(
+                session,
+                &model,
+                &prompt,
+                &references,
+                dimensions,
+                cancellation,
+                output,
+            )
+            .await
+        }
         Operation::Cancel { target_request_id } => {
             cancel_owned(state, session, &target_request_id).await
         }
@@ -724,41 +805,15 @@ async fn execute(
                 &mut request,
                 now(),
             )?;
-            let _permit = state
-                .slots
-                .clone()
-                .try_acquire_owned()
-                .context("gateway capacity reached")?;
-            let active_key = (session.account.clone(), payload.request_id.clone());
-            {
-                let mut active = state.active.lock().await;
-                ensure!(
-                    active
-                        .keys()
-                        .filter(|(account, _)| account == &session.account)
-                        .count()
-                        < 5
-                        && !active.contains_key(&active_key),
-                    "account concurrency reached"
-                );
-                let mut requests = session.requests.lock().await;
-                requests.retain(|_, expiry| *expiry > now());
-                ensure!(
-                    requests.len() < 4096 && !requests.contains_key(&payload.request_id),
-                    "inference request already admitted"
-                );
-                requests.insert(payload.request_id.clone(), session.expires_at);
-                active.insert(
-                    active_key,
-                    ActiveRequest {
-                        owner,
-                        cancellation: cancellation.clone(),
-                    },
-                );
-            }
-            output
-                .send("accepted", json!({"request_id": payload.request_id}))
-                .await?;
+            let _permit = admit_execution(
+                state,
+                session,
+                &payload.request_id,
+                owner,
+                cancellation,
+                output,
+            )
+            .await?;
             infer(
                 session,
                 &mut request,
@@ -771,6 +826,150 @@ async fn execute(
     }
 }
 
+#[derive(Debug)]
+enum RequestPhase {
+    RequestValidation,
+    ModelCatalog,
+    ModelSelection,
+    TrustPolicy,
+    UpstreamAttestation,
+    UpstreamExchange,
+    UploadBinding,
+    Capacity,
+}
+impl std::fmt::Display for RequestPhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::RequestValidation => "request_validation",
+            Self::ModelCatalog => "model_catalog",
+            Self::ModelSelection => "model_selection",
+            Self::TrustPolicy => "trust_policy",
+            Self::UpstreamAttestation => "upstream_attestation",
+            Self::UpstreamExchange => "upstream_exchange",
+            Self::UploadBinding => "upload_binding",
+            Self::Capacity => "capacity",
+        })
+    }
+}
+impl std::error::Error for RequestPhase {}
+
+fn request_failure(error: Option<&anyhow::Error>, cancelled: bool) -> Value {
+    let secure = error
+        .and_then(|e| e.downcast_ref::<axiom_web_gateway_core::secure_client::SecureClientError>());
+    json!({
+        "code": if cancelled { "CANCELLED" } else { secure.map_or("REQUEST_FAILED", |e| e.code().as_str()) },
+        "stage": error.and_then(|e| e.downcast_ref::<RequestPhase>()).map(ToString::to_string),
+        "retry_at": secure.and_then(axiom_web_gateway_core::secure_client::SecureClientError::retry_at),
+    })
+}
+
+async fn admit_execution(
+    state: &State,
+    session: &Session,
+    request_id: &str,
+    owner: [u8; 16],
+    cancellation: &CancellationToken,
+    output: &mut Output,
+) -> Result<OwnedSemaphorePermit> {
+    let permit = state
+        .slots
+        .clone()
+        .try_acquire_owned()
+        .context(RequestPhase::Capacity)?;
+    let active_key = (session.account.clone(), request_id.to_owned());
+    let mut active = state.active.lock().await;
+    ensure!(
+        active
+            .keys()
+            .filter(|(account, _)| account == &session.account)
+            .count()
+            < 5
+            && !active.contains_key(&active_key),
+        "account concurrency reached"
+    );
+    let mut requests = session.requests.lock().await;
+    requests.retain(|_, expiry| *expiry > now());
+    ensure!(
+        requests.len() < 4096 && !requests.contains_key(request_id),
+        "request already admitted"
+    );
+    requests.insert(request_id.to_owned(), session.expires_at);
+    active.insert(
+        active_key,
+        ActiveRequest {
+            owner,
+            cancellation: cancellation.clone(),
+        },
+    );
+    drop(requests);
+    drop(active);
+    output
+        .send("accepted", json!({"request_id":request_id}))
+        .await?;
+    Ok(permit)
+}
+
+async fn image_operation(
+    session: &Session,
+    model: &str,
+    prompt: &str,
+    references: &crate::uploads::ImageReferences,
+    dimensions: Option<ImageDimensions>,
+    cancellation: &CancellationToken,
+    output: &mut Output,
+) -> Result<Value> {
+    let sources = references
+        .images
+        .iter()
+        .map(|(id, image)| (id.as_str(), image))
+        .collect::<Vec<_>>();
+    let (sender, mut receiver) = mpsc::channel(16);
+    let future = session.client.image_request_with_progress(
+        ImageGenerationRequest {
+            chat_model_id: model,
+            prompt,
+            references: &sources,
+            dimensions,
+        },
+        sender,
+        cancellation.clone(),
+    );
+    tokio::pin!(future);
+    let mut image = loop {
+        tokio::select! {
+            () = cancellation.cancelled() => anyhow::bail!("image request cancelled"),
+            result = &mut future => break result.context(RequestPhase::UpstreamExchange)?,
+            Some(progress) = receiver.recv() => output.send("image_progress", serde_json::to_value(progress)?).await?,
+        }
+    };
+    ensure!(
+        image.evidence.state == SecurityState::Verified && image.usage.response_verified,
+        "image response authentication missing"
+    );
+    let data = zeroize::Zeroizing::new(std::mem::take(&mut image.data));
+    ensure!(
+        data.len() <= 12 * 1024 * 1024,
+        "image response exceeds limit"
+    );
+    let length = data.len();
+    let mut offset = 0;
+    for chunk in data.as_bytes().chunks(256 * 1024) {
+        output
+            .send(
+                "image_chunk",
+                json!({"offset":offset,"data":std::str::from_utf8(chunk)?}),
+            )
+            .await?;
+        offset += chunk.len();
+    }
+    let mut metadata = serde_json::to_value(image)?;
+    metadata
+        .as_object_mut()
+        .context("invalid image metadata")?
+        .remove("data");
+    Ok(json!({"upstream_response_verified":true,"image":metadata,"image_data_length":length}))
+}
+
 async fn infer(
     session: &Session,
     request: &mut InferenceRequest,
@@ -780,13 +979,23 @@ async fn infer(
 ) -> Result<Value> {
     request.request_id = Some(id.into());
     request.stream = true;
-    request.validate()?;
-    let models = session.client.models(cancellation.clone()).await?;
+    request
+        .validate()
+        .context(RequestPhase::RequestValidation)?;
+    let models = session
+        .client
+        .models(cancellation.clone())
+        .await
+        .context(RequestPhase::ModelCatalog)?;
     let model = models
         .iter()
         .find(|m| m.id == request.model)
-        .context("unsupported model")?;
-    let policy = session.client.trust_policy(cancellation.clone()).await?;
+        .context(RequestPhase::ModelSelection)?;
+    let policy = session
+        .client
+        .trust_policy(cancellation.clone())
+        .await
+        .context(RequestPhase::TrustPolicy)?;
     ensure!(
         policy.accepted_intel_statuses == ["UpToDate"],
         "weak upstream trust policy"
@@ -794,7 +1003,8 @@ async fn infer(
     let mut upstream = session
         .client
         .establish(model, &policy, cancellation.clone())
-        .await?;
+        .await
+        .context(RequestPhase::UpstreamAttestation)?;
     ensure!(
         upstream.evidence().state == SecurityState::Verified,
         "upstream attestation rejected"
@@ -814,7 +1024,8 @@ async fn infer(
         cancellation,
         output,
     )
-    .await?;
+    .await
+    .context(RequestPhase::UpstreamExchange)?;
     Ok(
         json!({"response":{"assistant":{"text":result.assistant.text,"reasoning":result.assistant.reasoning,"tool_calls":result.assistant.tool_calls},"refusal":result.refusal,"usage":result.usage,"finish_reason":result.finish_reason},"upstream_response_verified":true}),
     )
@@ -1093,5 +1304,20 @@ mod tests {
             .await
             .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use super::*;
+    #[test]
+    fn encrypted_failure_metadata_never_echoes_errors_or_payload_text() {
+        let error = anyhow::anyhow!("private prompt and credentials")
+            .context(RequestPhase::UpstreamExchange);
+        let value = request_failure(Some(&error), false);
+        assert_eq!(value["stage"], "upstream_exchange");
+        assert_eq!(value["code"], "REQUEST_FAILED");
+        assert!(!value.to_string().contains("private"));
+        assert_eq!(request_failure(Some(&error), true)["code"], "CANCELLED");
     }
 }

@@ -42,7 +42,7 @@
   "containers": [
     {
       "name": "gateway",
-      "image": "ghcr.io/astrea-foundation/axiom-web-gateway@sha256:1c703aa94efbdb41d4f37e6d71352c2bf6fa1144cfe268a5667a6d6122154367",
+      "image": "ghcr.io/astrea-foundation/axiom-web-gateway@sha256:1561a7ffd3744657d075e1c5cd06871461589ddc8e199fa89b463b6bc92cb6c2",
       "user": "10001:10001",
       "attestation": true,
       "keys": [
@@ -57,12 +57,7 @@
       "healthcheck": {
         "test": [
           "CMD",
-          "curl",
-          "--fail",
-          "--silent",
-          "--max-time",
-          "2",
-          "http://127.0.0.1:8080/healthz"
+          "/usr/local/bin/axiom-gateway-health"
         ],
         "interval": "20s",
         "timeout": "5s",

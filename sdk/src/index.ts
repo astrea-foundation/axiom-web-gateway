@@ -8,7 +8,8 @@ import { delegationDeadline } from './expiry.js';
 import { ProofRefresh } from './proof.js';
 import { GatewayAccountError, GatewaySessionError, sessionRejection } from './errors.js';
 import { SessionLifecycle } from './session-lifecycle.js';
-export { GatewayAccountError, GatewaySessionError, GatewayRestartedError } from './errors.js';
+export { GatewayAccountError, GatewaySessionError, GatewayRestartedError, GatewayRequestError } from './errors.js';
+export { requestImage, type GatewayImage, type ImageReference, type ImageProgress } from './image.js';
 export { type Frame } from './frames.js';
 
 const encoder = new TextEncoder();
@@ -179,6 +180,7 @@ export class GatewayClient {
     } finally { release(); }
   }
   async rpc(operation: { op: 'models' } | { op: 'infer'; request: Record<string, unknown>; uploads?: Array<{ upload_id: string; message_index: number }> } | { op: 'cancel'; target_request_id: string }
+    | { op: 'image_capabilities' } | { op: 'image'; model: string; prompt: string; references?: Array<{id:string;upload_id:string}>; dimensions?:{width:number;height:number}; aspect_ratio?:string }
     | { op: 'upload_begin'; upload: { target_request_id: string; model: string; kind: 'image' | 'file'; name: string; mime_type: string; length: number; sha256: string } }
     | { op: 'upload_chunk'; upload_id: string; offset: number; data: string; final_chunk: boolean } | { op: 'upload_abort'; target_request_id: string },
     onProvisional: (frame: Frame) => void = () => {}, options: { signal?: AbortSignal; requestId?: string } = {}): Promise<unknown> {

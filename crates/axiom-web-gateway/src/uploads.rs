@@ -29,6 +29,16 @@ pub struct Binding {
     pub upload_id: String,
     pub message_index: usize,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImageReference {
+    pub id: String,
+    pub upload_id: String,
+}
+pub struct ImageReferences {
+    pub images: Vec<(String, ImageContent)>,
+    _capacity: Vec<OwnedSemaphorePermit>,
+}
 struct Upload {
     account: String,
     session: String,
@@ -244,12 +254,138 @@ impl Uploads {
         request.validate()?;
         Ok(capacity)
     }
+    pub fn image_references(
+        &mut self,
+        account: &str,
+        session: &str,
+        target: &str,
+        model: &str,
+        references: &[ImageReference],
+        now: u64,
+    ) -> Result<ImageReferences> {
+        self.prune(now);
+        ensure!(
+            references.len() <= 5,
+            "at most five image references required"
+        );
+        let mut ids = std::collections::BTreeSet::new();
+        let mut uploads = std::collections::BTreeSet::new();
+        for reference in references {
+            ensure!(
+                !reference.id.is_empty()
+                    && reference.id.len() <= 128
+                    && !reference.id.chars().any(char::is_control)
+                    && ids.insert(&reference.id)
+                    && uploads.insert(&reference.upload_id),
+                "invalid image reference identity"
+            );
+            let upload = self
+                .0
+                .get(&reference.upload_id)
+                .context("unknown image upload")?;
+            ensure!(
+                upload.account == account
+                    && upload.session == session
+                    && upload.request.target_request_id == target
+                    && upload.request.model == model
+                    && upload.request.kind == "image"
+                    && upload.sealed,
+                "image reference binding rejected"
+            );
+        }
+        let mut images = Vec::new();
+        let mut capacity = Vec::new();
+        for reference in references {
+            let upload = self
+                .0
+                .remove(&reference.upload_id)
+                .context("unknown image upload")?;
+            capacity.push(upload.capacity);
+            images.push((
+                reference.id.clone(),
+                ImageContent {
+                    mime_type: upload.request.mime_type,
+                    data: STANDARD.encode(&*upload.bytes),
+                },
+            ));
+        }
+        Ok(ImageReferences {
+            images,
+            _capacity: capacity,
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use axiom_web_gateway_core::inference::{ChatMessage, ChatRole};
+    #[test]
+    fn image_references_preserve_order_and_reject_cross_owner_session_target_and_replay() {
+        // Upload transport fixtures; native verification and decoding remain separate gates.
+        let mut uploads = Uploads::default();
+        let target = "ab".repeat(16);
+        let mut refs = Vec::new();
+        for i in 0..5 {
+            let bytes = vec![i + 1];
+            let mut request = begin(&bytes);
+            request.kind = "image".into();
+            request.mime_type = "image/png".into();
+            let id = uploads.begin("a", "s", request, 100, 900).unwrap();
+            uploads
+                .chunk("a", "s", &id, 0, &STANDARD.encode(bytes), true, 100)
+                .unwrap();
+            refs.push(ImageReference {
+                id: format!("ref-{i}"),
+                upload_id: id,
+            });
+        }
+        refs.reverse();
+        for (account, session, request, model) in [
+            ("b", "s", target.as_str(), "model"),
+            ("a", "other", target.as_str(), "model"),
+            ("a", "s", "different", "model"),
+            ("a", "s", target.as_str(), "other"),
+        ] {
+            assert!(
+                uploads
+                    .image_references(account, session, request, model, &refs, 100)
+                    .is_err()
+            );
+        }
+        let result = uploads
+            .image_references("a", "s", &target, "model", &refs, 100)
+            .unwrap();
+        assert_eq!(
+            result
+                .images
+                .iter()
+                .map(|(id, _)| id.as_str())
+                .collect::<Vec<_>>(),
+            ["ref-4", "ref-3", "ref-2", "ref-1", "ref-0"]
+        );
+        assert_eq!(result.images[0].1.data, STANDARD.encode([5]));
+        assert!(
+            uploads
+                .image_references("a", "s", &target, "model", &refs, 100)
+                .is_err()
+        );
+    }
+    #[test]
+    fn image_references_reject_six_inputs() {
+        let mut uploads = Uploads::default();
+        let refs = (0..6)
+            .map(|i| ImageReference {
+                id: format!("ref-{i}"),
+                upload_id: format!("upload-{i}"),
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            uploads
+                .image_references("a", "s", &"ab".repeat(16), "model", &refs, 100)
+                .is_err()
+        );
+    }
     fn begin(bytes: &[u8]) -> Begin {
         Begin {
             target_request_id: "ab".repeat(16),

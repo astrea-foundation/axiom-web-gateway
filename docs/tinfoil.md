@@ -125,6 +125,11 @@ python3 scripts/publish-documents.py policy --key /protected/publisher.pem \
   --sequence 1 --output out/documents
 ```
 
+The account-service verifier must come from the matching reviewed gateway build.
+A successful enclave self-check cannot compensate for an older verifier rejecting
+registration at the account service. Keep the immutable verifier artifact and its
+source record with the release; swap it through the mounted tools directory.
+
 Use the platform v2 admission implementation. Build its optional backend variant
 from independently published immutable backend and gateway-verifier OCI images.
 Set its canonical gateway origin, pinned publisher key, static verifier executable,
