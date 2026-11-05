@@ -63,7 +63,7 @@ class DeploymentTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         prepare.prepare(args)
 
-    def test_astreaai_is_explicit_and_limited_to_staging(self):
+    def test_astreaai_staging_rejects_production_origins(self):
         with tempfile.TemporaryDirectory() as output:
             args = self.args(output)
             args.astreaai_staging = True
@@ -78,6 +78,24 @@ class DeploymentTests(unittest.TestCase):
             self.assertTrue({"95-133-254-84.nodes.verda.host", "nras.attestation.nvidia.com"}
                             <= set(config["networks"]["verification"]["allow"]))
             args.backend_origin = "https://api.axiom.stream"
+            with self.assertRaises(ValueError):
+                prepare.prepare(args)
+
+    def test_astreaai_production_rejects_mixed_environment_and_flags(self):
+        with tempfile.TemporaryDirectory() as output:
+            args = self.args(output)
+            args.astreaai_production = True
+            args.backend_origin = "https://api.axiom.stream"
+            args.gateway_origin = "https://axiom-gateway.axiomai.containers.tinfoil.dev"
+            args.browser_origin = ["https://auth.axiom.stream"]
+            config = prepare.prepare(args)
+            self.assertIn({"AXIOM_DIRECT_CLIENT_CONFIG_FILE": "/etc/axiom/astreaai-production.json"},
+                          config["containers"][0]["env"])
+            args.browser_origin = ["https://auth-staging.axiom.stream"]
+            with self.assertRaises(ValueError):
+                prepare.prepare(args)
+            args.browser_origin = ["https://auth.axiom.stream"]
+            args.astreaai_staging = True
             with self.assertRaises(ValueError):
                 prepare.prepare(args)
 

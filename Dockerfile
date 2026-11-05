@@ -29,9 +29,11 @@ RUN python -m venv /opt/axiom-direct \
     && /opt/axiom-direct/bin/pip install --require-hashes -r /build/direct-verifier/deploy/direct/requirements.lock \
     && /opt/axiom-direct/bin/python /build/direct-verifier/scripts/build_direct_tools.py --python /opt/axiom-direct/bin/python --output /usr/local/bin
 COPY deploy/astreaai-staging.json /etc/axiom/astreaai-staging.json
-RUN python -c 'import hashlib,json,pathlib; p=pathlib.Path("/etc/axiom/astreaai-staging.json"); c=json.loads(p.read_text()); c["verifier"]["binary_sha256"]=hashlib.sha256(pathlib.Path("/usr/local/bin/axiom-direct-verify").read_bytes()).hexdigest(); p.write_text(json.dumps(c,sort_keys=True)+"\n")' \
-    && chown 10001:10001 /etc/axiom/astreaai-staging.json \
-    && chmod 0400 /etc/axiom/astreaai-staging.json
+COPY deploy/astreaai-production.json /etc/axiom/astreaai-production.json
+COPY scripts/pin-direct-configs.py /build/pin-direct-configs.py
+RUN python /build/pin-direct-configs.py \
+    && chown 10001:10001 /etc/axiom/astreaai-*.json \
+    && chmod 0400 /etc/axiom/astreaai-*.json
 
 FROM python:3.12-slim@sha256:09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217 AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libssl3t64 && rm -rf /var/lib/apt/lists/*
@@ -39,6 +41,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 COPY --from=direct-verifier /opt/axiom-direct /opt/axiom-direct
 COPY --from=direct-verifier /usr/local/bin/axiom-direct-verify /usr/local/bin/axiom-direct-verify
 COPY --from=direct-verifier --chown=10001:10001 /etc/axiom/astreaai-staging.json /etc/axiom/astreaai-staging.json
+COPY --from=direct-verifier --chown=10001:10001 /etc/axiom/astreaai-production.json /etc/axiom/astreaai-production.json
 COPY --from=build /build/target/release/axiom-web-gateway /usr/local/bin/axiom-web-gateway
 COPY --from=verifier-build /axiom-gateway-verify /usr/local/bin/axiom-gateway-verify
 USER 10001:10001
