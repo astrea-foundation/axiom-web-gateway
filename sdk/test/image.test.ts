@@ -14,7 +14,8 @@ function fixture(change: (result: any)=>void=()=>{}, offset=0) {
   const client={retain:()=>()=>{},upload:async()=>{calls.push('upload');return String(calls.length);},rpc:async(payload:any,frame?:(value:Frame)=>void,options?:{requestId?:string})=>{
     calls.push(payload.op);if(payload.op!=='image') return {};
     frame?.({protocol:'axiom-gateway-v2',request_id:options!.requestId!,sequence:0,kind:'image_chunk',data:{offset,data}});
-    const result={upstream_response_verified:true,image_data_length:data.length,image:{request_id:request,mime_type:'image/png',width:1,height:1,sha256:digest,source_image_ids:payload.references.map((r:any)=>r.id),evidence:{},usage:{responseVerified:true,requestId:request}}};
+    // Exact GeneratedImage serde field names, including RequestUsage's binding.
+    const result={upstream_response_verified:true,image_data_length:data.length,image:{requestId:request,mimeType:'image/png',width:1,height:1,sha256:digest,sourceImageIds:payload.references.map((r:any)=>r.id),evidence:{state:'verified'},usage:{responseVerified:true,requestId:request}}};
     change(result);return result;
   }} as unknown as GatewayClient;
   return {client,calls};
@@ -30,7 +31,7 @@ test('six references are rejected before network work',async()=>{
   const {client,calls}=fixture();await assert.rejects(requestImage(client,{model:'model',prompt:'synthetic',references:Array.from({length:6},(_,i)=>reference(String(i)))}));assert.deepEqual(calls,[]);
 });
 test('wrong chunk offset, digest or source order cannot produce an accepted image',async()=>{
-  for(const {client} of [fixture(()=>{},1),fixture(r=>r.image.sha256='0'.repeat(64)),fixture(r=>r.image.source_image_ids.reverse())]) {
+  for(const {client} of [fixture(()=>{},1),fixture(r=>r.image.sha256='0'.repeat(64)),fixture(r=>r.image.sourceImageIds.reverse()),fixture(r=>r.image.usage.requestId='b'.repeat(32)),fixture(r=>r.image.usage.responseVerified=false)]) {
     await assert.rejects(requestImage(client,{model:'model',prompt:'synthetic',references:[reference('one'),reference('two')]}));
   }
 });
