@@ -11,7 +11,10 @@ use axiom_gateway_protocol::{
     authorization::{self, BrowserKey},
 };
 use axiom_web_gateway_core::{
-    inference::{ImageDimensions, ImageGenerationRequest, InferenceRequest, ProviderEvent},
+    inference::{
+        ImageDimensions, ImageGenerationRequest, InferenceRequest, MAX_GENERATED_IMAGE_BYTES,
+        ProviderEvent,
+    },
     openai_compat::{ChatCompletionRequest, CompatMode},
     secure_client::{ApiCredential, SecureClient, SecureClientConfig, SecurityState},
 };
@@ -943,12 +946,14 @@ async fn image_operation(
         }
     };
     ensure!(
-        image.evidence.state == SecurityState::Verified && image.usage.response_verified,
-        "image response authentication missing"
+        image.evidence.state == SecurityState::Verified
+            && image.usage.response_verified
+            && image.usage.settled,
+        "image response authentication or settlement missing"
     );
     let data = zeroize::Zeroizing::new(std::mem::take(&mut image.data));
     ensure!(
-        data.len() <= 12 * 1024 * 1024,
+        data.len() <= MAX_GENERATED_IMAGE_BYTES.div_ceil(3) * 4,
         "image response exceeds limit"
     );
     let length = data.len();
