@@ -161,6 +161,11 @@ accounting have passed. A successful native result without this event cannot
 authorize a gateway completion; all shared dependency pins must include the
 adapter's completion notification.
 
+NEAR emits the same signal after verifying its worker-signed request/response
+transcript, terminal run completion and transport EOF. A valid NEAR receipt alone
+does not release the signal. Missing or invalid receipts, cancelled requests and
+truncated streams still fail before authenticated gateway completion.
+
 ## SDK use
 
 ```ts
