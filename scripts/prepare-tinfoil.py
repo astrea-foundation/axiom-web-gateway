@@ -46,7 +46,8 @@ def prepare(args):
     allow = sorted({urlsplit(args.backend_origin).hostname, "inference.tinfoil.sh",
                     "github-proxy.tinfoil.sh", "kds-proxy.tinfoil.sh", "api.github.com",
                     "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com",
-                    "raw.githubusercontent.com", "api.trustedservices.intel.com", "kdsintf.amd.com",
+                    "raw.githubusercontent.com", "api.trustedservices.intel.com",
+                    "certificates.trustedservices.intel.com", "nras.attestation.nvidia.com", "kdsintf.amd.com",
                     "rekor.sigstore.dev", "fulcio.sigstore.dev", "tuf-repo-cdn.sigstore.dev"})
     staging = getattr(args, "astreaai_staging", False)
     production = getattr(args, "astreaai_production", False)
@@ -59,7 +60,7 @@ def prepare(args):
                 or args.gateway_origin != f"https://axiom-gateway{suffix}.axiomai.containers.tinfoil.dev"
                 or browsers != [f"https://auth{suffix}.axiom.stream"]):
             raise ValueError("AstreaAI requires its selected environment's exact origins")
-        allow = sorted(set(allow) | {"95-133-254-84.nodes.verda.host", "nras.attestation.nvidia.com"})
+        allow = sorted(set(allow) | {"95-133-254-84.nodes.verda.host"})
     config = {"cvm-version": args.cvm_version, "cpus": 2, "memory": 4096,
               "networks": {"verification": {"egress": "allowlist", "allow": allow}},
               "attested-keys": [{"id": "axiom-encryption", "key": "x25519", "uid": 10001, "gid": 10001},

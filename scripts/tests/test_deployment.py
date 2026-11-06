@@ -73,6 +73,19 @@ class DeploymentTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         prepare.prepare(args)
 
+    def test_near_collateral_is_reachable_without_enabling_astreaai(self):
+        with tempfile.TemporaryDirectory() as output:
+            config = prepare.prepare(self.args(output))
+            network = config["networks"]["verification"]
+            self.assertEqual(network["egress"], "allowlist")
+            # DCAP obtains Intel's root CRL from the certificate distribution
+            # point, separately from the PCS API. NEAR also appraises its GPU.
+            self.assertTrue({"api.trustedservices.intel.com",
+                             "certificates.trustedservices.intel.com",
+                             "nras.attestation.nvidia.com"} <= set(network["allow"]))
+            self.assertFalse(any("*" in host for host in network["allow"]))
+            self.assertNotIn("95-133-254-84.nodes.verda.host", network["allow"])
+
     def test_astreaai_staging_rejects_production_origins(self):
         with tempfile.TemporaryDirectory() as output:
             args = self.args(output)
