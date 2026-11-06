@@ -287,6 +287,12 @@ cannot be combined with `--astreaai-staging`. The measured deployment selects
 `/etc/axiom/astreaai-production.json`, the production account issuer and immutable
 production price versions. No grant-issuer private key is included in the image.
 
+AstreaAI discovery is additive. Its measured installed configuration must retain
+the validated NEAR AI and Tinfoil offerings returned by the production account
+API. The shared native client pin supplies this behavior for gateway sessions;
+each selected provider still establishes its own fresh attested E2EE session
+and authenticates completion before browser success.
+
 A production candidate must use an immutable image built from promoted main
 source, authenticated release measurements and a publisher-signed source mapping.
 Keep the previous production instance available while qualifying the candidate.
