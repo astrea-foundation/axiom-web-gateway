@@ -66,6 +66,12 @@ list on upstream dependency changes; never switch it to open to mask failures.
 The pinned Tinfoil Rust verifier uses `github-proxy.tinfoil.sh` for public release
 evidence and `kds-proxy.tinfoil.sh` for AMD certificates. Both must be reachable;
 direct GitHub/AMD hosts do not replace these configured proxy destinations.
+NEAR's Intel verification also fetches the root CRL from
+`certificates.trustedservices.intel.com`, as specified by Intel's root
+certificate, alongside PCS data from `api.trustedservices.intel.com`.
+Both hosts and `nras.attestation.nvidia.com` belong in the shared provider
+allowlist even when AstreaAI is disabled. These bounded public collateral
+requests retain certificate, revocation, signature, nonce and policy checks.
 Inference ciphertext continues through the account-scoped platform relay.
 The shim forwards only readiness, evidence, session and RPC paths and configured
 browser origins. The Rust listener is opened only after self-verification and
