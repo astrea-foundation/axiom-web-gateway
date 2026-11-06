@@ -10,6 +10,7 @@
         "api.axiom.stream",
         "api.github.com",
         "api.trustedservices.intel.com",
+        "certificates.trustedservices.intel.com",
         "fulcio.sigstore.dev",
         "github-proxy.tinfoil.sh",
         "github.com",
