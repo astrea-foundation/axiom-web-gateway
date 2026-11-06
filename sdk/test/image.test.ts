@@ -15,7 +15,7 @@ function fixture(change: (result: any)=>void=()=>{}, offset=0) {
     calls.push(payload.op);if(payload.op!=='image') return {};
     frame?.({protocol:'axiom-gateway-v2',request_id:options!.requestId!,sequence:0,kind:'image_chunk',data:{offset,data}});
     // Exact GeneratedImage serde field names, including RequestUsage's binding.
-    const result={upstream_response_verified:true,image_data_length:data.length,image:{requestId:request,mimeType:'image/png',width:1,height:1,sha256:digest,sourceImageIds:payload.references.map((r:any)=>r.id),evidence:{state:'verified'},usage:{responseVerified:true,requestId:request}}};
+    const result={upstream_response_verified:true,image_data_length:data.length,image:{requestId:request,mimeType:'image/png',width:1,height:1,sha256:digest,sourceImageIds:payload.references.map((r:any)=>r.id),evidence:{state:'verified'},usage:{responseVerified:true,settled:true,requestId:request}}};
     change(result);return result;
   }} as unknown as GatewayClient;
   return {client,calls};
@@ -31,8 +31,22 @@ test('six references are rejected before network work',async()=>{
   const {client,calls}=fixture();await assert.rejects(requestImage(client,{model:'model',prompt:'synthetic',references:Array.from({length:6},(_,i)=>reference(String(i)))}));assert.deepEqual(calls,[]);
 });
 test('wrong chunk offset, digest or source order cannot produce an accepted image',async()=>{
-  for(const {client} of [fixture(()=>{},1),fixture(r=>r.image.sha256='0'.repeat(64)),fixture(r=>r.image.sourceImageIds.reverse()),fixture(r=>r.image.usage.requestId='b'.repeat(32)),fixture(r=>r.image.usage.responseVerified=false)]) {
+  for(const {client} of [fixture(()=>{},1),fixture(r=>r.image.sha256='0'.repeat(64)),fixture(r=>r.image.sourceImageIds.reverse()),fixture(r=>r.image.usage.requestId='b'.repeat(32)),fixture(r=>r.image.usage.responseVerified=false),fixture(r=>r.image.usage.settled=false),fixture(r=>delete r.image.usage.settled)]) {
     await assert.rejects(requestImage(client,{model:'model',prompt:'synthetic',references:[reference('one'),reference('two')]}));
+  }
+});
+test('the complete 10 MiB output contract survives chunking, while a decoded byte over is rejected',async()=>{
+  // Post-verification bytes exercise delivery, not the shared provider's PNG decoder.
+  for (const size of [10*1024*1024,10*1024*1024+1]) {
+    const raw=Buffer.alloc(size,42),encoded=raw.toString('base64');
+    const hash=createHash('sha256').update(raw).digest('hex');
+    const client={retain:()=>()=>{},rpc:async(payload:any,frame?:(value:Frame)=>void,options?:{requestId?:string})=>{
+      if(payload.op!=='image')return {};
+      for(let offset=0;offset<encoded.length;offset+=256*1024) frame?.({protocol:'axiom-gateway-v2',request_id:options!.requestId!,sequence:offset,kind:'image_chunk',data:{offset,data:encoded.slice(offset,offset+256*1024)}});
+      return {upstream_response_verified:true,image_data_length:encoded.length,image:{requestId:request,mimeType:'image/png',width:1536,height:1536,sha256:hash,sourceImageIds:[],evidence:{state:'verified'},usage:{requestId:request,responseVerified:true,settled:true}}};
+    }} as unknown as GatewayClient;
+    if(size===10*1024*1024)assert.equal((await requestImage(client,{model:'model',prompt:'synthetic'})).data,encoded);
+    else await assert.rejects(requestImage(client,{model:'model',prompt:'synthetic'}));
   }
 });
 test('provisional image chunks are withheld until the RPC authenticates completion',async()=>{

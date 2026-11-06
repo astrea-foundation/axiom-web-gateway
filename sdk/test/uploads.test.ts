@@ -38,3 +38,19 @@ test('failed chunks discard session-owned handles and oversized files never disp
   await assert.rejects(client.upload({ ...input, bytes: new Uint8Array(10 * 1024 * 1024 + 1) }), /exceeds limit/);
   assert.equal(operations.length, before);
 });
+test('upload cleanup has a separate short deadline even when the upload signal is cancelled', async () => {
+  const client = Object.create(GatewayClient.prototype) as GatewayClient;
+  const controller = new AbortController();
+  let cleanupSignal: AbortSignal | undefined;
+  client.retain = () => () => {};
+  client.rpc = async (operation, _frame, options) => {
+    if (operation.op === 'upload_begin') return { upload_id: 'ab'.repeat(16) };
+    if (operation.op === 'upload_chunk') { controller.abort(); throw new Error('Upload stopped'); }
+    cleanupSignal = options?.signal;
+    return {};
+  };
+  await assert.rejects(client.upload({ bytes: new Uint8Array([1]), targetRequestId: 'cd'.repeat(16), model: 'model', kind: 'file', name: 'test.txt', mimeType: 'text/plain' }, controller.signal), /Upload stopped/);
+  assert(cleanupSignal, 'cleanup must not inherit the ten-minute RPC deadline');
+  assert.notEqual(cleanupSignal, controller.signal);
+  assert.equal(cleanupSignal.aborted, false, 'cleanup needs authority after local cancellation');
+});

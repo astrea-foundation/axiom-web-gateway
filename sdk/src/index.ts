@@ -175,7 +175,7 @@ export class GatewayClient {
       }
       return uploadId;
     } catch (error) {
-      await this.rpc({ op: 'upload_abort', target_request_id: input.targetRequestId }).catch(() => {});
+      await this.rpc({ op: 'upload_abort', target_request_id: input.targetRequestId }, () => {}, { signal: AbortSignal.timeout(5000) }).catch(() => {});
       throw error;
     } finally { release(); }
   }
