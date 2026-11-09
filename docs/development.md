@@ -42,6 +42,10 @@ Runtime bases are digest-pinned. Package installation is not claimed to be
 byte-for-byte reproducible; the measured immutable image covers installed bytes.
 
 The shared client pin also supplies its owned SNP/NVIDIA verifier source bundle.
+Keep all three shared crate revisions synchronized. The current stack uses
+AstreaAI for image generation and selects its image adapter from the selected
+chat model's curated `uncensored` tag. Updating the source pin takes effect in
+the running gateway only after a separately qualified measured release.
 `scripts/prepare-direct-verifier.py` resolves that bundle from Cargo's locked
 remote dependency and checks every file against its provenance manifest.
 No neighboring checkout or private inference repository is a build input.
