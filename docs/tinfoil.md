@@ -285,6 +285,15 @@ inference remains unavailable throughout. A failure after readiness exits
 immediately for normal restart handling. No exception text, credentials, keys,
 prompts or responses are written to the startup status file or health output.
 
+Production browser chat uses `https://chat.axiom.stream`; staging uses
+`https://chat-staging.axiom.stream`. The measured listener and Tinfoil shim both
+permit the corresponding chat origin. The matching auth origin remains allowed
+for explicit old-browser recovery during the move. Account, vault and gateway
+session permissions still require their own valid credentials and origin-bound
+proofs. Preparing a new measured deployment and publishing its signed policy is
+required before changing the public chat route; a source configuration edit does
+not update an existing gateway. Keep the current strict attestation checks.
+
 The runtime includes separate public AstreaAI account configurations for staging
 and production. The image build binds both to the digest of its independently
 built verifier. Generate a production deployment with `--astreaai-production`;
