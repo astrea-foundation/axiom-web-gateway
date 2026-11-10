@@ -94,7 +94,7 @@ class DeploymentTests(unittest.TestCase):
                 prepare.prepare(args)
             args.backend_origin = "https://api-staging.axiom.stream"
             args.gateway_origin = "https://axiom-gateway-staging.axiomai.containers.tinfoil.dev"
-            args.browser_origin = ["https://auth-staging.axiom.stream"]
+            args.browser_origin = ["https://chat-staging.axiom.stream", "https://auth-staging.axiom.stream"]
             config = prepare.prepare(args)
             self.assertIn({"AXIOM_DIRECT_CLIENT_CONFIG_FILE": "/etc/axiom/astreaai-staging.json"},
                           config["containers"][0]["env"])
@@ -110,7 +110,7 @@ class DeploymentTests(unittest.TestCase):
             args.astreaai_production = True
             args.backend_origin = "https://api.axiom.stream"
             args.gateway_origin = "https://axiom-gateway.axiomai.containers.tinfoil.dev"
-            args.browser_origin = ["https://auth.axiom.stream"]
+            args.browser_origin = ["https://chat.axiom.stream", "https://auth.axiom.stream"]
             config = prepare.prepare(args)
             self.assertIn({"AXIOM_DIRECT_CLIENT_CONFIG_FILE": "/etc/axiom/astreaai-production.json"},
                           config["containers"][0]["env"])

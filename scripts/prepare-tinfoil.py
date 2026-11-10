@@ -58,7 +58,7 @@ def prepare(args):
         suffix = "-staging" if staging else ""
         if (args.backend_origin != f"https://api{suffix}.axiom.stream"
                 or args.gateway_origin != f"https://axiom-gateway{suffix}.axiomai.containers.tinfoil.dev"
-                or browsers != [f"https://auth{suffix}.axiom.stream"]):
+                or not set(browsers) <= {f"https://chat{suffix}.axiom.stream", f"https://auth{suffix}.axiom.stream"}):
             raise ValueError("AstreaAI requires its selected environment's exact origins")
         allow = sorted(set(allow) | {"95-133-254-84.nodes.verda.host"})
     config = {"cvm-version": args.cvm_version, "cpus": 2, "memory": 4096,
