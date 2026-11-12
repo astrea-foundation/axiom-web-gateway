@@ -29,6 +29,7 @@ export async function readFrames(
   let total = 0, sequence = 0;
   let terminal: Terminal | FailureTerminal | undefined;
   let rejected: GatewaySessionError | undefined;
+  let generationObserved = false;
   try {
     for (;;) {
       const { done, value } = await reader.read();
@@ -58,6 +59,9 @@ export async function readFrames(
           terminal = data;
         } else {
           digest.update(line);
+          // Only known operational frames may precede a retry-safe rejection.
+          // Unknown future frames conservatively withhold replay permission.
+          if (!['accepted', 'upstream_proof', 'accounting'].includes(frame.kind)) generationObserved = true;
           onProvisional(frame);
         }
         start = end + 1;
@@ -68,7 +72,12 @@ export async function readFrames(
     if (pending.length) throw new Error('Gateway stream was interrupted');
     if (rejected) throw rejected;
     if (!terminal) throw new Error('Gateway stream was interrupted');
-    if (!terminal.success) throw requestFailure(terminal.result);
+    if (!terminal.success) {
+      const result = terminal.result && typeof terminal.result === 'object'
+        ? { ...terminal.result, ...(generationObserved ? { pre_generation: false } : {}) }
+        : terminal.result;
+      throw requestFailure(result);
+    }
     return terminal;
   } catch (error) {
     await reader.cancel().catch(() => {});
