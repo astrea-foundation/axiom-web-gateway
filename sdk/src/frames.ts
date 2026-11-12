@@ -3,7 +3,7 @@ import { GatewaySessionError, sessionRejection, requestFailure } from './errors.
 
 export const PROTOCOL = 'axiom-gateway-v2';
 const MAX_FRAME = 1024 * 1024;
-const MAX_RESPONSE = 16 * 1024 * 1024;
+const MAX_RESPONSE = 64 * 1024 * 1024;
 const hex = (bytes: Uint8Array) => Array.from(bytes, v => v.toString(16).padStart(2, '0')).join('');
 
 export interface Frame {

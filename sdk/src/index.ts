@@ -160,7 +160,7 @@ export class GatewayClient {
 
   /** Upload original bytes through attested EHBP; handles bind the session, model and next request. */
   async upload(input: { bytes: Uint8Array; targetRequestId: string; model: string; kind: 'image' | 'file'; name: string; mimeType: string }, signal?: AbortSignal): Promise<string> {
-    if (!input.bytes.length || input.bytes.length > (input.kind === 'image' ? 5 : 10) * 1024 * 1024) throw new Error('Attachment exceeds limit');
+    if (!input.bytes.length || input.bytes.length > (input.kind === 'image' ? 20 : 10) * 1024 * 1024) throw new Error('Attachment exceeds limit');
     const options = signal ? { signal } : {};
     const release = this.retain();
     try {

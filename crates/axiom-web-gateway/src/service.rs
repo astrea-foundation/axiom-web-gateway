@@ -1079,7 +1079,7 @@ async fn forward(event: ProviderEvent, output: &mut Output, verified: &mut bool)
             ensure!(value.state == SecurityState::Verified, "upstream evidence became unverified");
             output.send("upstream_proof", serde_json::to_value(value)?).await?;
         },
-        ProviderEvent::Finished(_) | ProviderEvent::SecurityState(_) | ProviderEvent::Status { .. } => {},
+        ProviderEvent::ToolCallStarted | ProviderEvent::Finished(_) | ProviderEvent::SecurityState(_) | ProviderEvent::Status { .. } => {},
     }
     Ok(())
 }
