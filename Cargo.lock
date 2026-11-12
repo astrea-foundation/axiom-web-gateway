@@ -234,7 +234,7 @@ dependencies = [
 [[package]]
 name = "axiom-inference"
 version = "0.1.0"
-source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=27997367fb121cec64ac5006b015aebe271477e9#27997367fb121cec64ac5006b015aebe271477e9"
+source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=effcf234f7bff48ab2aae858fcfbb247769b5116#effcf234f7bff48ab2aae858fcfbb247769b5116"
 dependencies = [
  "base64 0.22.1",
  "schemars",
@@ -245,7 +245,7 @@ dependencies = [
 [[package]]
 name = "axiom-openai-compat"
 version = "0.1.0"
-source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=27997367fb121cec64ac5006b015aebe271477e9#27997367fb121cec64ac5006b015aebe271477e9"
+source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=effcf234f7bff48ab2aae858fcfbb247769b5116#effcf234f7bff48ab2aae858fcfbb247769b5116"
 dependencies = [
  "axiom-inference",
  "serde",
@@ -256,7 +256,7 @@ dependencies = [
 [[package]]
 name = "axiom-pool-client"
 version = "0.1.0"
-source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=27997367fb121cec64ac5006b015aebe271477e9#27997367fb121cec64ac5006b015aebe271477e9"
+source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=effcf234f7bff48ab2aae858fcfbb247769b5116#effcf234f7bff48ab2aae858fcfbb247769b5116"
 dependencies = [
  "anyhow",
  "axiom-pool-protocol",
@@ -278,7 +278,7 @@ dependencies = [
 [[package]]
 name = "axiom-pool-protocol"
 version = "0.1.0"
-source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=27997367fb121cec64ac5006b015aebe271477e9#27997367fb121cec64ac5006b015aebe271477e9"
+source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=effcf234f7bff48ab2aae858fcfbb247769b5116#effcf234f7bff48ab2aae858fcfbb247769b5116"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -301,7 +301,7 @@ dependencies = [
 [[package]]
 name = "axiom-secure-client"
 version = "0.1.0"
-source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=27997367fb121cec64ac5006b015aebe271477e9#27997367fb121cec64ac5006b015aebe271477e9"
+source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=effcf234f7bff48ab2aae858fcfbb247769b5116#effcf234f7bff48ab2aae858fcfbb247769b5116"
 dependencies = [
  "anyhow",
  "async-trait",

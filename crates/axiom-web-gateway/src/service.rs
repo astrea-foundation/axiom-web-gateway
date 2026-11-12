@@ -863,6 +863,10 @@ fn request_failure(error: Option<&anyhow::Error>, cancelled: bool) -> Value {
         "code": if cancelled { "CANCELLED" } else { secure.map_or("REQUEST_FAILED", |e| e.code().as_str()) },
         "stage": error.and_then(|e| e.downcast_ref::<RequestPhase>()).map(ToString::to_string),
         "retry_at": secure.and_then(axiom_web_gateway_core::secure_client::SecureClientError::retry_at),
+        // This code is emitted by the shared client only after an explicit
+        // authenticated provider rejection, clean EOF, and no generation.
+        // It does not make generic upstream invalid requests retry-safe.
+        "pre_generation": !cancelled && secure.is_some_and(|e| e.code().as_str() == "CONTEXT_LENGTH_EXCEEDED"),
     })
 }
 
@@ -1072,6 +1076,7 @@ async fn forward(event: ProviderEvent, output: &mut Output, verified: &mut bool)
         ProviderEvent::TextDelta(value) => output.send("text_delta", json!({"text":value,"provisional":true})).await?,
         ProviderEvent::ReasoningDelta(value) => output.send("reasoning_delta", json!({"text":value,"provisional":true})).await?,
         ProviderEvent::RefusalDelta(value) => output.send("refusal_delta", json!({"text":value,"provisional":true})).await?,
+        ProviderEvent::ToolCallStarted => output.send("tool_call_started", json!({})).await?,
         ProviderEvent::ToolCallDelta(value) => output.send("tool_call_delta", json!({"index":value.index,"id":value.id,"name":value.name,"arguments":value.arguments})).await?,
         ProviderEvent::Usage { input_tokens, output_tokens } => output.send("usage", json!({"input_tokens":input_tokens,"output_tokens":output_tokens})).await?,
         ProviderEvent::Accounting(value) => output.send("accounting", serde_json::to_value(value)?).await?,
@@ -1315,6 +1320,10 @@ mod tests {
 #[cfg(test)]
 mod failure_tests {
     use super::*;
+    use axiom_web_gateway_core::{
+        inference::ProviderFailureKind,
+        secure_client::{SecureClientError, SecureErrorCode},
+    };
     #[test]
     fn encrypted_failure_metadata_never_echoes_errors_or_payload_text() {
         let error = anyhow::anyhow!("private prompt and credentials")
@@ -1322,7 +1331,40 @@ mod failure_tests {
         let value = request_failure(Some(&error), false);
         assert_eq!(value["stage"], "upstream_exchange");
         assert_eq!(value["code"], "REQUEST_FAILED");
+        assert_eq!(value["pre_generation"], false);
         assert!(!value.to_string().contains("private"));
         assert_eq!(request_failure(Some(&error), true)["code"], "CANCELLED");
+    }
+
+    #[test]
+    fn context_recovery_permission_uses_only_the_explicit_authenticated_code() {
+        let error = anyhow::Error::new(SecureClientError::with_code(
+            ProviderFailureKind::InvalidRequest,
+            SecureErrorCode::ContextLengthExceeded,
+            "Safe pre-generation rejection",
+            false,
+        ))
+        .context(RequestPhase::UpstreamExchange);
+        let value = request_failure(Some(&error), false);
+        assert_eq!(value["code"], "CONTEXT_LENGTH_EXCEEDED");
+        assert_eq!(value["pre_generation"], true);
+        assert_eq!(value["stage"], "upstream_exchange");
+        assert!(!value.to_string().contains("Safe"));
+        assert_eq!(request_failure(Some(&error), true)["pre_generation"], false);
+
+        let generic = anyhow::Error::new(SecureClientError::new(
+            ProviderFailureKind::InvalidRequest,
+            "Private provider text context_length_exceeded",
+        ))
+        .context(RequestPhase::UpstreamExchange);
+        assert_eq!(
+            request_failure(Some(&generic), false)["pre_generation"],
+            false
+        );
+        assert!(
+            !request_failure(Some(&generic), false)
+                .to_string()
+                .contains("Private")
+        );
     }
 }

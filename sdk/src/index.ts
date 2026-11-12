@@ -203,17 +203,31 @@ export class GatewayClient {
     const payload = JSON.stringify({ request_id: requestId, ...operation });
     if (encoder.encode(payload).length > 3 * 1024 * 1024) throw new Error('Gateway request exceeds limit');
     const proof = await GatewayClient.authorize(this.key, this.publicKey, this.session, this.options.gatewayOrigin + '/v1/rpc', this.proof.encryption_key, payload);
-    const response = await this.transport.request(this.options.gatewayOrigin + '/v1/rpc', {
-      method: 'POST', body: JSON.stringify({ protocol: PROTOCOL, session_id: this.session, proof, payload }),
-      credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'error',
-      signal: AbortSignal.any([AbortSignal.timeout(610_000), ...(options.signal ? [options.signal] : [])]),
-    });
-    GatewayClient.encrypted(response);
-    const result = (await readFrames(response.body!, requestId, onProvisional)).result;
-    // Start time is conservative: receiving a slow reply must not extend a
-    // server idle lease after that server has finished producing its response.
-    this.lifecycle.acknowledge(started);
-    return result;
+    const signal = AbortSignal.any([AbortSignal.timeout(610_000), ...(options.signal ? [options.signal] : [])]);
+    signal.throwIfAborted();
+    try {
+      const response = await this.transport.request(this.options.gatewayOrigin + '/v1/rpc', {
+        method: 'POST', body: JSON.stringify({ protocol: PROTOCOL, session_id: this.session, proof, payload }),
+        credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'error', signal,
+      });
+      signal.throwIfAborted();
+      GatewayClient.encrypted(response);
+      const result = (await readFrames(response.body!, requestId, frame => {
+        signal.throwIfAborted();
+        onProvisional(frame);
+        signal.throwIfAborted();
+      })).result;
+      signal.throwIfAborted();
+      // Start time is conservative: receiving a slow reply must not extend a
+      // server idle lease after that server has finished producing its response.
+      this.lifecycle.acknowledge(started);
+      return result;
+    } catch (error) {
+      // Buffered authenticated responses can finish after caller cancellation.
+      // Cancellation must never be translated into permission to replay.
+      signal.throwIfAborted();
+      throw error;
+    }
   }
 }
 
