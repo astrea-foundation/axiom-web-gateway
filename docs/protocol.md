@@ -214,5 +214,17 @@ uses a separate five-second deadline so cancelling an upload cannot wait for the
 ordinary ten-minute inference timeout. Cleanup failure never authorizes a replay.
 A failed terminal exposes only finite operational
 codes and phases, after transcript and EOF authentication; provider error text,
-prompts, credentials and image bytes never enter diagnostics. Requests are not
-automatically replayed after a failure.
+prompts, credentials and image bytes never enter diagnostics. The SDK does not
+automatically replay failed requests.
+
+An explicit provider context rejection may expose the finite code
+`CONTEXT_LENGTH_EXCEEDED` and `pre_generation:true`. The shared provider client
+classifies only an authenticated rejection before any completion event and
+after clean provider EOF. Ordinary HTTP errors, relay diagnostics, generic
+`INVALID_REQUEST` failures and ambiguous disconnects grant no replay permission.
+The SDK exposes `GatewayRequestError.preGeneration` only after gateway terminal
+transcript binding and authenticated EOF, in `request_validation` or
+`upstream_exchange`, and withholds it if generation or unknown frames preceded
+the terminal. A client may use this narrow condition for bounded local
+compaction followed by a fresh encrypted request. Tools and ambiguous requests
+must never be replayed as context recovery.
