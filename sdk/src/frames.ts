@@ -61,7 +61,7 @@ export async function readFrames(
           digest.update(line);
           // Only known operational frames may precede a retry-safe rejection.
           // Unknown future frames conservatively withhold replay permission.
-          if (!['accepted', 'upstream_proof', 'accounting'].includes(frame.kind)) generationObserved = true;
+          if (!['accepted', 'upstream_proof'].includes(frame.kind)) generationObserved = true;
           onProvisional(frame);
         }
         start = end + 1;

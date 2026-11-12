@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { createHash } from 'node:crypto';
 import { GatewayRequestError, requestFailure } from '../src/errors.js';
 import { PROTOCOL, readFrames } from '../src/frames.js';
+import { GatewayClient } from '../src/index.js';
 
 const id = 'b'.repeat(32);
 const line = (sequence: number, kind: string, data: unknown) => JSON.stringify({ protocol: PROTOCOL, request_id: id, sequence, kind, data }) + '\n';
@@ -50,9 +51,45 @@ test('context rejection reaches the caller only after terminal transcript bindin
 });
 
 test('generation or unknown frames withhold replay permission even if terminal claims pre-generation', async () => {
-  for (const kind of ['text_delta', 'reasoning_delta', 'refusal_delta', 'tool_call_delta', 'image_progress', 'future_frame']) {
+  for (const kind of ['text_delta', 'reasoning_delta', 'refusal_delta', 'tool_call_delta', 'image_progress', 'accounting', 'future_frame']) {
     const prefix = line(0, kind, { text: 'provisional', arguments: '{}' });
     await assert.rejects(readFrames(stream(failure(prefix)), id, () => {}), error =>
       error instanceof GatewayRequestError && error.code === rejection.code && !error.preGeneration);
+  }
+});
+
+test('accounting contents never grant replay permission after a contradictory context terminal', async () => {
+  for (const data of [
+    { output_tokens: '1', reasoning_tokens: '1', state: 'completed', response_verified: true },
+    { output_tokens: 'unknown', state: 'completed' },
+    { output_tokens: '0', reasoning_tokens: '0', state: 'failed', response_verified: false },
+  ]) {
+    const prefix = line(0, 'accounting', data);
+    await assert.rejects(readFrames(stream(failure(prefix)), id, () => {}), error =>
+      error instanceof GatewayRequestError && !error.preGeneration);
+  }
+});
+
+test('caller abort wins over an already buffered authenticated failure or success', async () => {
+  const key = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']);
+  const publicKey = await crypto.subtle.exportKey('jwk', key.publicKey);
+  for (const success of [false, true]) {
+    const controller = new AbortController(), reason = new Error('Caller stopped this reply');
+    const prefix = line(0, 'accepted', { request_id: id });
+    const body = success ? prefix + line(1, 'terminal', {
+      success: true, transcript_sha256: createHash('sha256').update(prefix).digest('hex'), result: { answer: 'late' },
+    }) : failure(prefix);
+    let acknowledged = 0, released = 0;
+    // A synthetic authenticated transport port, never a network/provider call.
+    const client = Object.assign(Object.create(GatewayClient.prototype), {
+      options: { gatewayOrigin: 'https://gateway.invalid' },
+      proof: { policy_expires_at: Date.now() / 1000 + 600, evidence_expires_at: Date.now() / 1000 + 600, encryption_key: 'a'.repeat(64) },
+      expires: Date.now() / 1000 + 600, session: 'fixture', key: key.privateKey, publicKey,
+      lifecycle: { enter: () => () => { released++; }, acknowledge: () => { acknowledged++; } },
+      transport: { request: async () => new Response(body, { headers: { 'ehbp-response-nonce': 'a'.repeat(64) } }) },
+    }) as GatewayClient;
+    await assert.rejects(client.rpc({ op: 'models' }, () => controller.abort(reason), { requestId: id, signal: controller.signal }), error => error === reason);
+    assert.equal(acknowledged, 0);
+    assert.equal(released, 1);
   }
 });
