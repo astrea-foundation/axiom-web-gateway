@@ -1,10 +1,10 @@
 # Development
 
-Use `~/sync2/work/axiom-web-gateway`. Required tools: Rust 1.90+, Go 1.27.2,
+Use `~/sync2/work/axiom-web-gateway`. Required tools: Rust 1.90+, Go 1.27.1,
 Node 24+, pnpm 11.22, OpenSSL and Podman or Docker for packaging. `Cargo.lock`,
 `verifier/go.mod`, `verifier/go.sum` and `pnpm-lock.yaml` pin dependencies.
 No Desktop checkout is required. The official Tinfoil verifier is pinned to
-`31c57af7d7b4fedf1724cb3552924dc6ecebf109`; both upstream replacements in
+`ef79d8ed92a4b5e669c71328caa2b4a9f7931d25`; both upstream replacements in
 `go.mod` are required for its portable dependency graph.
 
 ```sh
@@ -40,12 +40,6 @@ credential is passed through build arguments or layers. Outputs:
 CGO-disabled static executable for independently built backend images.
 Runtime bases are digest-pinned. Package installation is not claimed to be
 byte-for-byte reproducible; the measured immutable image covers installed bytes.
-
-Both Git and the container context exclude `.env`, `.env.*`, private PEM files
-and key files. Keep credentials outside the checkout and build context; an
-untracked file is not automatically excluded from a container build. The
-recursive environment-file rules also cover nested directories; see Docker's
-[ignore matching rules](https://docs.docker.com/build/concepts/context/#matching).
 
 An ordinary host cannot open the gateway listener: it lacks fresh valid Tinfoil
 supported CPU evidence, granted keys, signed provenance and backend admission. There is no

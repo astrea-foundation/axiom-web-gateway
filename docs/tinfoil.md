@@ -71,12 +71,6 @@ The shim forwards only readiness, evidence, session and RPC paths and configured
 browser origins. The Rust listener is opened only after self-verification and
 backend admission, not merely when the container starts.
 
-The selected production configuration for `v0.1.2` binds the immutable runtime
-image `sha256:7ba75f7cfe44edffd0b82ecac25299b88d495008b960bbe3daaa46af1c52a615` built from promoted source
-`0c7de2f69f618a084aabcd10f6a91a9003e5e1d0`. It includes monotonic policy
-acceptance and verified evidence-expiry enforcement. The browser protocol remains
-compatible with the deployed SDK; the corresponding new SDK is 0.2.2.
-
 ## Release and staged startup
 
 Before creating anything, install the current Tinfoil CLI, run `tinfoil login`
@@ -185,7 +179,7 @@ authorized action.
 
 Sources: [Tinfoil quickstart](https://docs.tinfoil.sh/containers/quickstart),
 [boot-key configuration](https://github.com/tinfoilsh/tinfoil-config),
-[offline verifier](https://github.com/tinfoilsh/tinfoil-go/tree/31c57af7d7b4fedf1724cb3552924dc6ecebf109/verify),
+[offline verifier](https://github.com/tinfoilsh/tinfoil-go/tree/ef79d8ed92a4b5e669c71328caa2b4a9f7931d25/verify),
 [release template](https://github.com/tinfoilsh/tinfoil-containers-template/tree/0eddc320b8f328d7a3c057152596934444ac2d75).
 
 
@@ -206,45 +200,9 @@ witness from `tinfoilsh/freshness-witness` and for v3 proof to verify. Do not by
 freshness, supply a replacement signer or fall back to the unversioned v2 document.
 A successful VM boot or legacy quote alone cannot qualify the application.
 
-### Application health and verification failures
-
-Tinfoil's instance state describes the confidential VM. A Running VM can have
-an unavailable gateway process; check `/healthz` and fresh `/v1/attestation`
-evidence as well. Generated configurations declare a loopback HTTP healthcheck
-using the image's `curl`, with a two-minute startup grace period. The listener
-opens only after mandatory self-verification and backend admission.
-
-Every two minutes the application renews and verifies its attestation epoch.
-A failed or timed-out renewal cancels the service and returns an error, producing
-a nonzero process exit for the measured `restart: on-failure` policy. A later
-startup must verify fresh evidence and admission again before opening a listener.
-Operator termination remains a successful exit. Rejected evidence is never
-accepted, and failures do not expose verifier input or credentials in logs.
-
-On October 9, 2026, live evidence rejected by the previous verifier pinned to
-`v0.17.0-rc.1` identified Tinfoil's new platform publisher:
-`tinfoilsh/cvmimage/.github/workflows/platform-release.yml`, tag
-`platform-v0.1.0`. The pinned official verifier now includes upstream
-[publisher migration 224](https://github.com/tinfoilsh/tinfoil-go/pull/224), with
-the exact workflow, immutable repository/organization identity, artifact schemas,
-hardware checks and freshness authentication retained. Update the native
-verifier, backend verifier image and packaged browser WASM together. Restarting
-an old verifier against a new publisher cannot restore service; it must continue
-to reject the unsupported signing identity.
-
 See the [official witness control-plane contract](https://github.com/tinfoilsh/freshness-witness).
 
 The gateway closes the verifier stdin descriptor before awaiting output. A
 process-framing regression checks EOF delivery; it does not mock live hardware
 qualification. Backend runtime roles also need the documented gateway table
 grants before admission can succeed.
-
-## Shared-chat staging workload
-
-The staging configuration selects the immutable upload-capable runtime from
-source `23ca69e60604f8cc9d7976d4c261580817b2a9a5`, built by
-[container artifacts 37641794831](https://github.com/astrea-foundation/axiom-web-gateway/actions/runs/37641794831).
-This update adds bounded original-file uploads and authenticated acceptance events.
-It requires a newly measured staging release and publisher-signed source mapping;
-the prior staging qualification does not cover this workload. Hardware, key,
-freshness, stream-completion and upstream provider checks remain required.

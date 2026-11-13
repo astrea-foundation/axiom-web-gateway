@@ -4,8 +4,14 @@ const pending = new Map<number, { resolve(value: string): void; reject(error: Er
 /** Verify off the UI thread. Node tests use the identical packaged WASM directly. */
 export async function verifyGateway(evidence: unknown, context: unknown, bytes?: BufferSource): Promise<string> {
   const input = JSON.stringify({ evidence, context });
+  return verifyInput(input, bytes, 'gateway');
+}
+export async function verifyPoolWorker(evidence: unknown, context: unknown, nvidia: unknown, bytes?: BufferSource): Promise<string> {
+  return verifyInput(JSON.stringify({ evidence, context, nvidia }), bytes, 'pool');
+}
+async function verifyInput(input: string, bytes: BufferSource | undefined, profile: 'gateway' | 'pool'): Promise<string> {
   if (new TextEncoder().encode(input).length > 8 * 1024 * 1024) throw new Error('gateway attestation failed');
-  if (typeof Worker === 'undefined') return (await import('./verifier-runtime.js')).verifyLocally(input, bytes);
+  if (typeof Worker === 'undefined') return (await import('./verifier-runtime.js')).verifyLocally(input, bytes, profile);
   if (!worker) {
     worker = new Worker(new URL('./verifier-worker.js', import.meta.url), { type: 'module' });
     worker.onmessage = ({ data }) => {
@@ -23,6 +29,6 @@ export async function verifyGateway(evidence: unknown, context: unknown, bytes?:
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { pending.delete(id); reject(new Error('Gateway verification timed out')); }, 60_000);
     pending.set(id, { resolve, reject, timer });
-    worker!.postMessage({ id, input, bytes });
+    worker!.postMessage({ id, input, bytes, profile });
   });
 }

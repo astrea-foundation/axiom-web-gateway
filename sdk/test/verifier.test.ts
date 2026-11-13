@@ -8,3 +8,9 @@ test('packaged Tinfoil browser verifier rejects malformed evidence without echoi
     await assert.rejects(verifyLocally(input, bytes), { message: 'gateway attestation failed' });
   }
 });
+test('packaged production pool verifier rejects synthetic hardware evidence without echoing it', async () => {
+  const bytes = await readFile(new URL('../wasm/axiom_gateway_verifier.wasm', import.meta.url));
+  for (const input of ['{}', '{"evidence":{"document":{"test_fixture_only":true,"PRIVATE_INPUT":true}}}', 'broken PRIVATE_INPUT']) {
+    await assert.rejects(verifyLocally(input, bytes, 'pool'), { message: 'gateway attestation failed' });
+  }
+});

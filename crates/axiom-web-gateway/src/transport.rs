@@ -25,6 +25,7 @@ pub struct Reply {
     pub nonce_hex: String,
     sequence: u64,
     sent_bytes: usize,
+    max_bytes: usize,
 }
 
 impl Identity {
@@ -63,9 +64,23 @@ impl Identity {
     }
     /// Each RPC request is exactly one authenticated HPKE frame. Multiple or
     /// incomplete frames are rejected, preventing request truncation ambiguity.
+    #[cfg(test)]
     pub fn open(&self, encapsulated_key: &str, body: &[u8]) -> Result<(Zeroizing<Vec<u8>>, Reply)> {
+        self.open_with_limits(encapsulated_key, body, 4 * 1024 * 1024, 16 * 1024 * 1024)
+    }
+    pub fn open_with_limits(
+        &self,
+        encapsulated_key: &str,
+        body: &[u8],
+        request_limit: usize,
+        response_limit: usize,
+    ) -> Result<(Zeroizing<Vec<u8>>, Reply)> {
         ensure!(
-            body.len() >= 20 && body.len() <= 4 * 1024 * 1024,
+            request_limit <= 24 * 1024 * 1024 && response_limit <= 160 * 1024 * 1024,
+            "invalid transport limits"
+        );
+        ensure!(
+            body.len() >= 20 && body.len() <= request_limit,
             "invalid encrypted body size"
         );
         let length = usize::try_from(u32::from_be_bytes(body[..4].try_into()?))?;
@@ -100,6 +115,7 @@ impl Identity {
                 nonce_hex: hex::encode(nonce),
                 sequence: 0,
                 sent_bytes: 0,
+                max_bytes: response_limit,
             },
         ))
     }
@@ -114,7 +130,7 @@ impl Reply {
             .checked_add(plaintext.len())
             .ok_or_else(|| anyhow::anyhow!("response limit"))?;
         ensure!(
-            self.sent_bytes <= 16 * 1024 * 1024
+            self.sent_bytes <= self.max_bytes
                 && plaintext.len() <= 1024 * 1024
                 && self.sequence < u64::MAX,
             "response limit"

@@ -2,7 +2,6 @@ use crate::{
     Config,
     attestation::Collector,
     now,
-    sessions::{Activity, HEARTBEAT_SECONDS, IDLE_SECONDS},
     transport::{Identity, Reply},
 };
 use anyhow::{Context, Result, ensure};
@@ -31,9 +30,9 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio::sync::{Mutex, RwLock, Semaphore, mpsc};
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
+mod pool;
 
 pub struct State {
-    pub uploads: Mutex<crate::uploads::Uploads>,
     pub config: Config,
     pub identity: Arc<Identity>,
     pub authorization_key: ed25519_dalek::SigningKey,
@@ -55,14 +54,12 @@ pub struct Lease {
     expires_at: u64,
 }
 pub struct Session {
-    id: String,
     account: String,
     key: BrowserKey,
     client: Arc<SecureClient>,
     expires_at: u64,
-    activity: Arc<Activity>,
     replays: Mutex<BTreeMap<String, u64>>,
-    requests: Mutex<BTreeMap<String, u64>>,
+    pool_token: Zeroizing<String>,
 }
 
 // Match the verifier's clock tolerance, without extending a local lifetime.
@@ -96,96 +93,9 @@ struct RpcPayload {
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum Operation {
-    Heartbeat,
-    SessionClose,
     Models,
-    Infer {
-        request: Box<ChatCompletionRequest>,
-        #[serde(default)]
-        uploads: Vec<crate::uploads::Binding>,
-    },
-    UploadBegin {
-        upload: crate::uploads::Begin,
-    },
-    UploadChunk {
-        upload_id: String,
-        offset: usize,
-        data: String,
-        final_chunk: bool,
-    },
-    UploadAbort {
-        target_request_id: String,
-    },
-    Cancel {
-        target_request_id: String,
-    },
-}
-
-#[derive(Debug)]
-struct SessionCapacity;
-impl std::fmt::Display for SessionCapacity {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("session capacity reached")
-    }
-}
-impl std::error::Error for SessionCapacity {}
-
-fn prune_locked(
-    sessions: &mut BTreeMap<String, Arc<Session>>,
-    uploads: &mut crate::uploads::Uploads,
-    current: u64,
-) {
-    uploads.prune(current);
-    sessions.retain(|id, session| {
-        if session
-            .activity
-            .removable(current, session.expires_at, uploads.has_session(id))
-        {
-            uploads.discard_session(id);
-            false
-        } else {
-            true
-        }
-    });
-}
-
-pub async fn prune_sessions(state: &State) {
-    let mut sessions = state.sessions.lock().await;
-    let mut uploads = state.uploads.lock().await;
-    prune_locked(&mut sessions, &mut uploads, now());
-}
-
-fn admit_session(
-    sessions: &mut BTreeMap<String, Arc<Session>>,
-    uploads: &mut crate::uploads::Uploads,
-    candidate: Arc<Session>,
-    maximum: usize,
-    current: u64,
-) -> Result<()> {
-    prune_locked(sessions, uploads, current);
-    if sessions
-        .values()
-        .filter(|session| session.account == candidate.account)
-        .count()
-        >= 4
-    {
-        // Reclaim only this account's idle session. Never displace an in-flight
-        // reply, upload, or another account's live session to admit a reload.
-        let oldest = sessions
-            .iter()
-            .filter(|(id, session)| {
-                session.account == candidate.account
-                    && !session.activity.busy()
-                    && !uploads.has_session(id)
-            })
-            .min_by_key(|(_, session)| session.activity.last_used())
-            .map(|(id, _)| id.clone());
-        let id = oldest.ok_or(SessionCapacity)?;
-        sessions.remove(&id);
-    }
-    ensure!(sessions.len() < maximum, SessionCapacity);
-    sessions.insert(candidate.id.clone(), candidate);
-    Ok(())
+    Infer { request: Box<ChatCompletionRequest> },
+    Cancel { target_request_id: String },
 }
 
 impl State {
@@ -220,7 +130,7 @@ impl State {
             .context("invalid lease expiry")?;
         let current = now();
         let expires_at =
-            delegation_deadline(remote_expiry, current, 240)?.min(collector.evidence_expires_at());
+            delegation_deadline(remote_expiry, current, 240)?.min(collector.policy_expires_at());
         ensure!(
             token.starts_with("axl_") && expires_at > current,
             "invalid gateway admission"
@@ -286,6 +196,7 @@ pub fn router(state: Arc<State>) -> Result<Router> {
         ])
         .expose_headers([axum::http::HeaderName::from_static("axiom-response-nonce")]);
     Ok(Router::new()
+        .merge(pool::router())
         .route("/healthz", get(|| async { "ok" }))
         .route("/v1/attestation", post(proof))
         .route("/v1/session", post(session))
@@ -335,6 +246,23 @@ async fn proof(
 }
 
 fn open(state: &State, headers: &HeaderMap, body: &[u8]) -> Result<(Envelope, Reply)> {
+    open_protocol(
+        state,
+        headers,
+        body,
+        PROTOCOL,
+        4 * 1024 * 1024,
+        16 * 1024 * 1024,
+    )
+}
+fn open_protocol(
+    state: &State,
+    headers: &HeaderMap,
+    body: &[u8],
+    protocol: &str,
+    request_limit: usize,
+    response_limit: usize,
+) -> Result<(Envelope, Reply)> {
     ensure!(!state.shutdown.is_cancelled(), "gateway unavailable");
     ensure!(
         state
@@ -351,12 +279,15 @@ fn open(state: &State, headers: &HeaderMap, body: &[u8]) -> Result<(Envelope, Re
         .get("axiom-encapsulated-key")
         .context("encrypted request required")?
         .to_str()?;
-    let (plaintext, reply) = state.identity.open(encapsulated, body)?;
-    let envelope: Envelope = serde_json::from_slice(&plaintext)?;
+    let (plaintext, reply) =
+        state
+            .identity
+            .open_with_limits(encapsulated, body, request_limit, response_limit)?;
+    let envelope: Envelope = axiom_pool_protocol::strict::decode(&plaintext)?;
     ensure!(
-        envelope.protocol == PROTOCOL
+        envelope.protocol == protocol
             && envelope.proof.len() <= 8192
-            && envelope.payload.len() <= 4 * 1024 * 1024,
+            && envelope.payload.len() <= request_limit,
         "invalid encrypted envelope"
     );
     Ok((envelope, reply))
@@ -415,28 +346,30 @@ async fn session(
             ApiCredential::new(token),
         )?);
         let id = hex::encode(rand::random::<[u8; 32]>());
-        let candidate = Arc::new(Session {
-                id: id.clone(),
+        let mut sessions = state.sessions.lock().await;
+        sessions.retain(|_, value| value.expires_at > now());
+        ensure!(
+            sessions.len() < state.config.max_sessions
+                && sessions.values().filter(|s| s.account == account).count() < 4,
+            "session capacity reached"
+        );
+        sessions.insert(
+            id.clone(),
+            Arc::new(Session {
                 account,
                 key,
                 client,
                 expires_at,
-                activity: Activity::new(now()),
                 replays: Mutex::new(BTreeMap::new()),
-                requests: Mutex::new(BTreeMap::new()),
-            });
-        let mut sessions = state.sessions.lock().await;
-        let mut uploads = state.uploads.lock().await;
-        admit_session(&mut sessions, &mut uploads, candidate, state.config.max_sessions, now())?;
-        Ok::<_, anyhow::Error>(json!({"protocol":PROTOCOL,"session_id":id,"expires_at":expires_at,
-            "session_lifecycle":{"version":1,"heartbeat_interval_seconds":HEARTBEAT_SECONDS,"idle_timeout_seconds":IDLE_SECONDS}}))
+                pool_token: Zeroizing::new(token.to_owned()),
+            }),
+        );
+        Ok::<_, anyhow::Error>(json!({"protocol":PROTOCOL,"session_id":id,"expires_at":expires_at}))
     }
     .await;
     let payload = match result {
         Ok(value) => json!({"success":true,"data":value}),
-        Err(error) => {
-            json!({"success":false,"code":if error.is::<SessionCapacity>() { "session_capacity" } else { "authorization_failed" }})
-        }
+        Err(_) => json!({"success":false,"code":"authorization_failed"}),
     };
     match reply.frame(&payload) {
         Ok(bytes) => encrypted_response(&reply.nonce_hex, Body::from(bytes)),
@@ -459,58 +392,6 @@ fn encrypted_response(nonce: &str, body: Body) -> Response {
     response
 }
 
-async fn authorize_rpc(
-    state: &State,
-    envelope: &Envelope,
-) -> Result<(Arc<Session>, RpcPayload, crate::sessions::Use)> {
-    let id = envelope.session_id.as_ref().context("missing session")?;
-    let sessions = state.sessions.lock().await;
-    let session = sessions.get(id).cloned().context("unknown session")?;
-    let payload: RpcPayload = serde_json::from_str(&envelope.payload)?;
-    ensure!(session.expires_at > now(), "session expired");
-    ensure!(
-        !session.activity.closing()
-            || matches!(
-                payload.operation,
-                Operation::SessionClose | Operation::Cancel { .. }
-            ),
-        "session closed"
-    );
-    // A pending upload remains usable after browser timer throttling. Its
-    // own hard lifetime and account/session bindings remain mandatory.
-    ensure!(
-        !session.activity.expired(now(), session.expires_at)
-            || session.activity.busy()
-            || state.uploads.lock().await.has_session(id),
-        "session idle expired"
-    );
-    let proof = authorization::verify(
-        &envelope.proof,
-        &session.key,
-        id,
-        &format!("{}/v1/rpc", state.config.public_origin),
-        &state.identity.public_hex,
-        &envelope.payload,
-        now(),
-    )?;
-    let mut replays = session.replays.lock().await;
-    replays.retain(|_, expiry| *expiry > now());
-    ensure!(
-        replays.len() < 4096 && !replays.contains_key(&proof.jti),
-        "request replay or capacity limit"
-    );
-    replays.insert(proof.jti, proof.iat + 91);
-    drop(replays);
-    ensure!(
-        payload.request_id.len() == 32 && hex::decode(&payload.request_id)?.len() == 16,
-        "invalid request identity"
-    );
-    session.activity.touch(now());
-    let activity = session.activity.pin();
-    drop(sessions);
-    Ok::<_, anyhow::Error>((session, payload, activity))
-}
-
 async fn rpc(
     ExtractState(state): ExtractState<Arc<State>>,
     headers: HeaderMap,
@@ -519,8 +400,42 @@ async fn rpc(
     let Ok((envelope, reply)) = open(&state, &headers, &body) else {
         return rejected(StatusCode::BAD_REQUEST);
     };
-    let result = authorize_rpc(&state, &envelope).await;
-    let Ok((session, payload, activity)) = result else {
+    let result = async {
+        let id = envelope.session_id.as_ref().context("missing session")?;
+        let session = state
+            .sessions
+            .lock()
+            .await
+            .get(id)
+            .cloned()
+            .context("unknown session")?;
+        ensure!(session.expires_at > now(), "session expired");
+        let proof = authorization::verify(
+            &envelope.proof,
+            &session.key,
+            id,
+            &format!("{}/v1/rpc", state.config.public_origin),
+            &state.identity.public_hex,
+            &envelope.payload,
+            now(),
+        )?;
+        let mut replays = session.replays.lock().await;
+        replays.retain(|_, expiry| *expiry > now());
+        ensure!(
+            replays.len() < 4096 && !replays.contains_key(&proof.jti),
+            "request replay or capacity limit"
+        );
+        replays.insert(proof.jti, proof.iat + 91);
+        drop(replays);
+        let payload: RpcPayload = serde_json::from_str(&envelope.payload)?;
+        ensure!(
+            payload.request_id.len() == 32 && hex::decode(&payload.request_id)?.len() == 16,
+            "invalid request identity"
+        );
+        Ok::<_, anyhow::Error>((session, payload))
+    }
+    .await;
+    let Ok((session, payload)) = result else {
         let mut reply = reply;
         return match reply.frame(&json!({"success":false,"code":"authorization_failed"})) {
             Ok(bytes) => encrypted_response(&reply.nonce_hex, Body::from(bytes)),
@@ -532,7 +447,6 @@ async fn rpc(
     let cancellation = state.shutdown.child_token();
     let stream_cancel = cancellation.clone();
     tokio::spawn(async move {
-        let _activity = activity;
         let active_key = (session.account.clone(), payload.request_id.clone());
         let owner = rand::random::<[u8; 16]>();
         let mut output = Output {
@@ -628,37 +542,6 @@ impl Output {
     }
 }
 
-async fn cancel_owned(state: &State, session: &Session, target_request_id: &str) -> Result<Value> {
-    ensure!(target_request_id.len() == 32, "invalid cancellation target");
-    let active = state.active.lock().await;
-    if let Some(target) = active.get(&(session.account.clone(), target_request_id.to_owned())) {
-        target.cancellation.cancel();
-    } else {
-        // Completion can race cancellation. Only this session's admission journal
-        // permits success after the active operation has finished.
-        ensure!(
-            session
-                .requests
-                .lock()
-                .await
-                .get(target_request_id)
-                .is_some_and(|expiry| *expiry > now()),
-            "request not owned by account"
-        );
-    }
-    Ok(json!({"cancelled": true}))
-}
-
-async fn discard_uploads(state: &State, session: &Session, target: &str) -> Result<Value> {
-    state
-        .uploads
-        .lock()
-        .await
-        .discard(&session.account, &session.id, target);
-    Ok(json!({"discarded": true}))
-}
-
-#[allow(clippy::too_many_lines)] // Keep the bounded authenticated operation dispatch together.
 async fn execute(
     state: &Arc<State>,
     session: &Arc<Session>,
@@ -668,62 +551,22 @@ async fn execute(
     output: &mut Output,
 ) -> Result<Value> {
     match payload.operation {
-        Operation::Heartbeat => {
-            session.activity.heartbeat(now());
-            Ok(json!({"alive":true,"expires_at":session.expires_at}))
-        }
-        Operation::SessionClose => {
-            session.activity.close();
-            Ok(json!({"closed":true}))
-        }
-        Operation::UploadBegin { upload } => {
-            let id = state.uploads.lock().await.begin(
-                &session.account,
-                &session.id,
-                upload,
-                now(),
-                session.expires_at,
-            )?;
-            Ok(json!({"upload_id": id}))
-        }
-        Operation::UploadChunk {
-            upload_id,
-            offset,
-            data,
-            final_chunk,
-        } => {
-            state.uploads.lock().await.chunk(
-                &session.account,
-                &session.id,
-                &upload_id,
-                offset,
-                &data,
-                final_chunk,
-                now(),
-            )?;
-            Ok(json!({"stored": true}))
-        }
-        Operation::UploadAbort { target_request_id } => {
-            discard_uploads(state, session, &target_request_id).await
-        }
         Operation::Models => {
             let models = session.client.models(cancellation.clone()).await?;
             output.send("models", serde_json::to_value(models)?).await?;
             Ok(json!({}))
         }
         Operation::Cancel { target_request_id } => {
-            cancel_owned(state, session, &target_request_id).await
+            ensure!(target_request_id.len() == 32, "invalid cancellation target");
+            let active = state.active.lock().await;
+            let target = active
+                .get(&(session.account.clone(), target_request_id))
+                .context("request not owned by account")?;
+            target.cancellation.cancel();
+            Ok(json!({"cancelled":true}))
         }
-        Operation::Infer { request, uploads } => {
+        Operation::Infer { request } => {
             let mut request = (*request).into_domain(CompatMode::Strict)?.request;
-            let _upload_capacity = state.uploads.lock().await.attach(
-                &session.account,
-                &session.id,
-                &payload.request_id,
-                &uploads,
-                &mut request,
-                now(),
-            )?;
             let _permit = state
                 .slots
                 .clone()
@@ -741,13 +584,6 @@ async fn execute(
                         && !active.contains_key(&active_key),
                     "account concurrency reached"
                 );
-                let mut requests = session.requests.lock().await;
-                requests.retain(|_, expiry| *expiry > now());
-                ensure!(
-                    requests.len() < 4096 && !requests.contains_key(&payload.request_id),
-                    "inference request already admitted"
-                );
-                requests.insert(payload.request_id.clone(), session.expires_at);
                 active.insert(
                     active_key,
                     ActiveRequest {
@@ -756,9 +592,6 @@ async fn execute(
                     },
                 );
             }
-            output
-                .send("accepted", json!({"request_id": payload.request_id}))
-                .await?;
             infer(
                 session,
                 &mut request,
@@ -867,128 +700,6 @@ async fn forward(event: ProviderEvent, output: &mut Output, verified: &mut bool)
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn fixture_session(id: u8, account: &str, current: u64) -> Arc<Session> {
-        Arc::new(Session {
-            id: format!("{id:064x}"),
-            account: account.into(),
-            key: BrowserKey {
-                kty: "EC".into(),
-                crv: "P-256".into(),
-                x: String::new(),
-                y: String::new(),
-            },
-            client: Arc::new(
-                SecureClient::new(
-                    SecureClientConfig::new("https://backend.example").unwrap(),
-                    ApiCredential::new("synthetic-registry-fixture"),
-                )
-                .unwrap(),
-            ),
-            expires_at: current + 900,
-            activity: Activity::new(current),
-            replays: Mutex::new(BTreeMap::new()),
-            requests: Mutex::new(BTreeMap::new()),
-        })
-    }
-
-    #[test]
-    fn repeated_reload_admission_preserves_a_reply_and_its_pending_upload() {
-        let current = now();
-        let mut sessions = BTreeMap::new();
-        let mut uploads = crate::uploads::Uploads::default();
-        let reply = fixture_session(1, "account", current);
-        let upload = fixture_session(2, "account", current);
-        let _reply = reply.activity.pin();
-        uploads
-            .begin(
-                "account",
-                &upload.id,
-                crate::uploads::Begin {
-                    target_request_id: "ab".repeat(16),
-                    model: "fixture-model".into(),
-                    kind: "image".into(),
-                    name: "fixture.png".into(),
-                    mime_type: "image/png".into(),
-                    length: 1,
-                    sha256: hex::encode(Sha256::digest([1_u8])),
-                },
-                current,
-                upload.expires_at,
-            )
-            .unwrap();
-        admit_session(&mut sessions, &mut uploads, Arc::clone(&reply), 32, current).unwrap();
-        admit_session(
-            &mut sessions,
-            &mut uploads,
-            Arc::clone(&upload),
-            32,
-            current,
-        )
-        .unwrap();
-        for id in 3..25 {
-            admit_session(
-                &mut sessions,
-                &mut uploads,
-                fixture_session(id, "account", current + u64::from(id)),
-                32,
-                current,
-            )
-            .unwrap();
-            assert!(sessions.len() <= 4);
-            assert!(sessions.contains_key(&reply.id));
-            assert!(sessions.contains_key(&upload.id));
-            assert!(uploads.has_session(&upload.id));
-        }
-    }
-
-    #[test]
-    fn capacity_errors_never_displace_active_operations_or_other_accounts() {
-        let current = now();
-        let mut sessions = BTreeMap::new();
-        let mut uploads = crate::uploads::Uploads::default();
-        let mut pins = Vec::new();
-        for id in 0..4 {
-            let session = fixture_session(id, "account", current);
-            pins.push(session.activity.pin());
-            admit_session(&mut sessions, &mut uploads, session, 8, current).unwrap();
-        }
-        let error = admit_session(
-            &mut sessions,
-            &mut uploads,
-            fixture_session(9, "account", current),
-            8,
-            current,
-        )
-        .unwrap_err();
-        assert!(error.is::<SessionCapacity>());
-        assert_eq!(sessions.len(), 4);
-        let error = admit_session(
-            &mut sessions,
-            &mut uploads,
-            fixture_session(10, "other", current),
-            4,
-            current,
-        )
-        .unwrap_err();
-        assert!(error.is::<SessionCapacity>());
-        assert_eq!(sessions.len(), 4);
-    }
-
-    #[test]
-    fn explicit_release_is_reclaimed_only_after_the_last_response_finishes() {
-        let current = now();
-        let session = fixture_session(1, "account", current);
-        let active = session.activity.pin();
-        let mut sessions = BTreeMap::from([(session.id.clone(), Arc::clone(&session))]);
-        let mut uploads = crate::uploads::Uploads::default();
-        session.activity.close();
-        prune_locked(&mut sessions, &mut uploads, current);
-        assert_eq!(sessions.len(), 1);
-        drop(active);
-        prune_locked(&mut sessions, &mut uploads, current);
-        assert!(sessions.is_empty());
-    }
 
     #[test]
     fn cross_clock_delegation_never_extends_the_local_lifetime() {

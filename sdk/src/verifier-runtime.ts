@@ -4,6 +4,7 @@ import '../wasm/wasm_exec.js';
 declare global {
   var Go: new () => { importObject: WebAssembly.Imports; run(instance: WebAssembly.Instance): Promise<void> };
   var axiomVerifyGatewayV2: ((input: string) => { result?: string; error?: string }) | undefined;
+  var axiomVerifyPoolWorkerV1: ((input: string) => { result?: string; error?: string }) | undefined;
 }
 let ready: Promise<void> | undefined;
 export function initialize(bytes?: BufferSource): Promise<void> {
@@ -15,13 +16,13 @@ export function initialize(bytes?: BufferSource): Promise<void> {
       return response.arrayBuffer();
     })();
     const { instance } = await WebAssembly.instantiate(source, go.importObject);
-    void go.run(instance).catch(() => { globalThis.axiomVerifyGatewayV2 = undefined; });
+    void go.run(instance).catch(() => { globalThis.axiomVerifyGatewayV2 = undefined; globalThis.axiomVerifyPoolWorkerV1 = undefined; });
     if (!globalThis.axiomVerifyGatewayV2) throw new Error('Gateway verifier unavailable');
   })();
 }
-export async function verifyLocally(input: string, bytes?: BufferSource): Promise<string> {
+export async function verifyLocally(input: string, bytes?: BufferSource, profile: 'gateway' | 'pool' = 'gateway'): Promise<string> {
   await initialize(bytes);
-  const output = globalThis.axiomVerifyGatewayV2?.(input);
+  const output = profile === 'pool' ? globalThis.axiomVerifyPoolWorkerV1?.(input) : globalThis.axiomVerifyGatewayV2?.(input);
   if (!output?.result || output.error) throw new Error('gateway attestation failed');
   return output.result;
 }

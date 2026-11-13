@@ -1,9 +1,6 @@
 mod attestation;
-mod lifecycle;
 mod service;
-mod sessions;
 mod transport;
-mod uploads;
 
 use anyhow::{Context, Result, ensure};
 use axiom_gateway_protocol::{SignedDocument, TrustPolicy, verify_document};
@@ -204,29 +201,17 @@ async fn run() -> Result<()> {
         collector: RwLock::new(collector),
         sessions: Mutex::new(BTreeMap::new()),
         active: Mutex::new(BTreeMap::new()),
-        uploads: Mutex::new(uploads::Uploads::default()),
         lease: Mutex::new(None),
         shutdown: shutdown.clone(),
     });
     // No listener until hardware/workload self-verification and attested backend admission pass.
     state.lease().await?;
-    let upload_state = Arc::clone(&state);
-    let upload_cleanup = tokio::spawn(async move {
-        loop {
-            tokio::select! { () = upload_state.shutdown.cancelled() => break, () = tokio::time::sleep(Duration::from_secs(10)) => {} }
-            upload_state.uploads.lock().await.prune(now());
-            service::prune_sessions(&upload_state).await;
-        }
-    });
     let refresh_state = Arc::clone(&state);
-    let refresh = tokio::spawn(lifecycle::refresh_loop(
-        shutdown.clone(),
-        policy.sequence,
-        Duration::from_secs(120),
-        Duration::from_secs(60),
-        move |sequence| {
-            let refresh_state = Arc::clone(&refresh_state);
-            async move {
+    let refresh = tokio::spawn(async move {
+        let mut sequence = policy.sequence;
+        loop {
+            tokio::select! { () = refresh_state.shutdown.cancelled() => break, () = tokio::time::sleep(Duration::from_secs(120)) => {} }
+            let result = tokio::time::timeout(Duration::from_secs(60), async {
                 let candidate = collect(
                     &refresh_state.config,
                     &refresh_state.http,
@@ -243,11 +228,17 @@ async fn run() -> Result<()> {
                     &refresh_state.config.publisher_key,
                     "axiom-gateway-policy-v2",
                 )?;
+                sequence = policy.sequence;
                 *refresh_state.collector.write().await = candidate;
-                Ok(policy.sequence)
+                Ok::<_, anyhow::Error>(())
+            })
+            .await;
+            if !matches!(result, Ok(Ok(()))) {
+                refresh_state.shutdown.cancel();
+                break;
             }
-        },
-    ));
+        }
+    });
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     let signal = shutdown.clone();
     tokio::spawn(async move {
@@ -271,7 +262,6 @@ async fn run() -> Result<()> {
         .with_graceful_shutdown(shutdown.clone().cancelled_owned())
         .await?;
     shutdown.cancel();
-    refresh.await??;
-    upload_cleanup.await?;
+    refresh.await?;
     Ok(())
 }

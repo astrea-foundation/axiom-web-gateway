@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 anyhow.workspace = true
 axiom-gateway-protocol.workspace = true
+axiom-pool-protocol = { path = "../../vendor/axiom-pool-protocol" }
 axiom-web-gateway-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true

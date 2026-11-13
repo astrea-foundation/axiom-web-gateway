@@ -6,7 +6,7 @@
     "verification": {
       "egress": "allowlist",
       "allow": [
-        "api.axiom.stream",
+        "api-staging.axiom.stream",
         "api.github.com",
         "api.trustedservices.intel.com",
         "fulcio.sigstore.dev",
@@ -40,7 +40,7 @@
   "containers": [
     {
       "name": "gateway",
-      "image": "ghcr.io/astrea-foundation/axiom-web-gateway@sha256:7ba75f7cfe44edffd0b82ecac25299b88d495008b960bbe3daaa46af1c52a615",
+      "image": "ghcr.io/astrea-foundation/axiom-web-gateway@sha256:6171c55a83819a62b2505e0c2e57435c8bcf20b5e2de97569d86ae897c639067",
       "user": "10001:10001",
       "attestation": true,
       "keys": [
@@ -52,26 +52,11 @@
         "verification"
       ],
       "restart": "on-failure",
-      "healthcheck": {
-        "test": [
-          "CMD",
-          "curl",
-          "--fail",
-          "--silent",
-          "--max-time",
-          "2",
-          "http://127.0.0.1:8080/healthz"
-        ],
-        "interval": "20s",
-        "timeout": "5s",
-        "retries": 3,
-        "start_period": "120s"
-      },
       "memory": "3072m",
       "pids_limit": 128,
       "env": [
         {
-          "AXIOM_GATEWAY_CONFIG_JSON": "{\"listen\":\"0.0.0.0:8080\",\"public_origin\":\"https://axiom-gateway.axiomai.containers.tinfoil.dev\",\"backend_origin\":\"https://api.axiom.stream\",\"publisher_key\":\"c14866d87b4feb6ba248a6ffe314c6cf835117c995332c350930105990de83d7\",\"browser_origins\":[\"https://auth.axiom.stream\"],\"max_concurrency\":32,\"max_sessions\":512,\"attestation_socket\":\"/tinfoil/attestation.sock\",\"encryption_key_path\":\"/run/tinfoil/keys/axiom-encryption/private_key.pem\",\"authorization_key_path\":\"/run/tinfoil/keys/axiom-authorization/private_key.pem\",\"verifier\":\"/usr/local/bin/axiom-gateway-verify\"}"
+          "AXIOM_GATEWAY_CONFIG_JSON": "{\"listen\":\"0.0.0.0:8080\",\"public_origin\":\"https://axiom-gateway-staging.axiomai.containers.tinfoil.dev\",\"backend_origin\":\"https://api-staging.axiom.stream\",\"publisher_key\":\"7ce33c4faec560b2fc191c7beb373a690ef80ba769e9011941f2578dc49b8c33\",\"browser_origins\":[\"https://app-staging.axiom.stream\",\"https://auth-staging.axiom.stream\"],\"max_concurrency\":32,\"max_sessions\":512,\"attestation_socket\":\"/tinfoil/attestation.sock\",\"encryption_key_path\":\"/run/tinfoil/keys/axiom-encryption/private_key.pem\",\"authorization_key_path\":\"/run/tinfoil/keys/axiom-authorization/private_key.pem\",\"verifier\":\"/usr/local/bin/axiom-gateway-verify\"}"
         }
       ]
     }
@@ -80,13 +65,19 @@
     "upstream-port": 8080,
     "upstream-container": "gateway",
     "origins": [
-      "https://auth.axiom.stream"
+      "https://app-staging.axiom.stream",
+      "https://auth-staging.axiom.stream"
     ],
     "paths": [
       "/healthz",
       "/v1/attestation",
       "/v1/session",
-      "/v1/rpc"
+      "/v1/rpc",
+      "/v1/pool/reserve",
+      "/v1/pool/grants",
+      "/v1/pool/attestation",
+      "/v1/pool/control",
+      "/v1/pool/exchange"
     ]
   }
 }

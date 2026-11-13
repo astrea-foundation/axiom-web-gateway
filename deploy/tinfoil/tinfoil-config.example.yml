@@ -69,7 +69,12 @@
       "/healthz",
       "/v1/attestation",
       "/v1/session",
-      "/v1/rpc"
+      "/v1/rpc",
+      "/v1/pool/reserve",
+      "/v1/pool/grants",
+      "/v1/pool/attestation",
+      "/v1/pool/control",
+      "/v1/pool/exchange"
     ]
   }
 }

@@ -5,11 +5,10 @@ import { SignJWT } from 'jose';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { PROTOCOL, readFrames, type Frame } from './frames.js';
 import { delegationDeadline } from './expiry.js';
-import { ProofRefresh } from './proof.js';
-import { GatewayAccountError, GatewaySessionError, sessionRejection } from './errors.js';
-import { SessionLifecycle } from './session-lifecycle.js';
-export { GatewayAccountError, GatewaySessionError, GatewayRestartedError } from './errors.js';
+import { PoolClient, type PoolOptions } from './pool.js';
+import { OUTER, POOL } from './pool-wire.js';
 export { type Frame } from './frames.js';
+export { PoolClient, type PoolOptions, type PoolLimits, type PoolInput, type PoolResult } from './pool.js';
 
 const encoder = new TextEncoder();
 const hex = (bytes: Uint8Array) => Array.from(bytes, v => v.toString(16).padStart(2, '0')).join('');
@@ -52,8 +51,7 @@ export interface GatewayOptions {
   backendOrigin: string;
   /** Persist this independently of gateway responses to prevent policy rollback. */
   minimumPolicySequence?: number;
-  /** Complete an atomic monotonic update; reject if a newer policy was already accepted. */
-  rememberPolicySequence?: (sequence: number) => void | Promise<void>;
+  rememberPolicySequence?: (sequence: number) => void;
   /** Allows extension cookie/session integration without putting credentials in proofs. */
   grant: (publicKey: JsonWebKey, signal?: AbortSignal) => Promise<string>;
   /** Optional packaged WASM bytes for extensions that prohibit fetched executable code. */
@@ -74,39 +72,19 @@ async function attest(options: GatewayOptions, signal?: AbortSignal, minimumSequ
       challenge, origin: options.gatewayOrigin, publisher_key: options.publisherKey,
       now: now(), minimum_policy_sequence: minimumSequence,
     }, options.verifierWasm)) as VerifiedGateway;
-    await options.rememberPolicySequence?.(proof.policy_sequence);
-    deadline.throwIfAborted();
-    if (proof.policy_expires_at <= now() || proof.evidence_expires_at <= now()) throw new Error('Gateway attestation expired');
+    options.rememberPolicySequence?.(proof.policy_sequence);
   return proof;
 }
 
 export class GatewayClient {
   readonly proof: VerifiedGateway;
-  private readonly proofRefresh: ProofRefresh;
-  private readonly lifecycle: SessionLifecycle;
+  private readonly lifetime = new AbortController();
   private constructor(
     private readonly options: GatewayOptions, proof: VerifiedGateway,
     private readonly transport: GatewayTransport, private readonly key: CryptoKey,
     private readonly publicKey: JsonWebKey, private readonly session: string,
     private readonly expires: number,
-    lifecycleSupported: boolean,
-  ) {
-    this.proof = proof;
-    this.proofRefresh = new ProofRefresh(proof, (minimum, signal) => attest(options, signal, minimum));
-    this.lifecycle = new SessionLifecycle(lifecycleSupported, () => this.expires > now() && this.proof.policy_expires_at > now(),
-      op => this.requestRpc({ op }, () => {}, { signal: AbortSignal.timeout(15_000) }));
-    this.lifecycle.start();
-  }
-
-  get available(): boolean { return this.lifecycle.available; }
-  retain(): () => void { return this.lifecycle.retain(); }
-  close(): Promise<void> { return this.lifecycle.close(); }
-  async verify(signal?: AbortSignal): Promise<VerifiedGateway> {
-    if (!this.available) throw new GatewaySessionError('session_expired');
-    await this.proofRefresh.refresh(signal);
-    if (!this.available) throw new GatewaySessionError('session_expired');
-    return this.proof;
-  }
+  ) { this.proof = proof; }
 
   static async connect(options: GatewayOptions, signal?: AbortSignal): Promise<GatewayClient> {
     origin(options.gatewayOrigin); origin(options.backendOrigin);
@@ -123,79 +101,70 @@ export class GatewayClient {
     const keys = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']);
     const exported = await crypto.subtle.exportKey('jwk', keys.publicKey);
     const publicKey: JsonWebKey = { kty: 'EC', crv: 'P-256', x: exported.x!, y: exported.y! };
-    let grant: string;
-    try { grant = await options.grant(publicKey, deadline); }
-    catch (error) { throw new GatewayAccountError(error); }
-    if (!/^axw_[A-Za-z0-9_-]{43}$/.test(grant)) throw new GatewayAccountError(new Error('Invalid gateway grant'));
+    const grant = await options.grant(publicKey, deadline);
+    if (!/^axw_[A-Za-z0-9_-]{43}$/.test(grant)) throw new Error('Invalid gateway grant');
     const payload = JSON.stringify({ grant });
     const authorization = await GatewayClient.authorize(keys.privateKey, publicKey, grant, options.gatewayOrigin + '/v1/session', proof.encryption_key, payload);
-    try {
-      const response = await transport.request(options.gatewayOrigin + '/v1/session', {
-        method: 'POST', body: JSON.stringify({ protocol: PROTOCOL, session_id: null, proof: authorization, payload }),
-        credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'error', signal: deadline,
-      });
-      GatewayClient.encrypted(response);
-      const value = await boundedJson(response, 16_384);
-      if (value.success === false) throw sessionRejection(value.code);
-      if (value.success !== true || value.data?.protocol !== PROTOCOL || !/^[0-9a-f]{64}$/.test(value.data?.session_id) ||
-          !Number.isSafeInteger(value.data?.expires_at)) throw new GatewaySessionError('session_rejected');
-      const expires = delegationDeadline(value.data.expires_at, now(), 900);
-      const lifecycle = value.data.session_lifecycle;
-      if (lifecycle !== undefined && (lifecycle.version !== 1 || lifecycle.heartbeat_interval_seconds !== 60 || lifecycle.idle_timeout_seconds !== 180)) throw new GatewaySessionError('session_rejected');
-      return new GatewayClient(options, proof, transport, keys.privateKey, publicKey, value.data.session_id, expires, lifecycle !== undefined);
-    } catch (error) {
-      if (error instanceof GatewaySessionError) throw error;
-      throw new GatewaySessionError('session_rejected', { cause: error });
-    }
+    const response = await transport.request(options.gatewayOrigin + '/v1/session', {
+      method: 'POST', body: JSON.stringify({ protocol: PROTOCOL, session_id: null, proof: authorization, payload }),
+      credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'error', signal: deadline,
+    });
+    GatewayClient.encrypted(response);
+    const value = await boundedJson(response, 16_384);
+    if (value.success !== true || value.data?.protocol !== PROTOCOL || !/^[0-9a-f]{64}$/.test(value.data?.session_id) ||
+        !Number.isSafeInteger(value.data?.expires_at)) throw new Error('Gateway session rejected');
+    const expires = delegationDeadline(value.data.expires_at, now(), 900);
+    return new GatewayClient(options, proof, transport, keys.privateKey, publicKey, value.data.session_id, expires);
   }
 
   private static encrypted(response: Response): void {
     if (!response.ok || !/^[0-9a-f]{64}$/.test(response.headers.get('ehbp-response-nonce') ?? '') || !response.body) throw new Error('Authenticated gateway response required');
+  }
+  /** Call on logout or account switch before creating the next account's client. */
+  close(): void { this.lifetime.abort(); }
+  private active(): void {
+    if (this.lifetime.signal.aborted || this.expires <= now() || this.proof.policy_expires_at <= now()) throw new Error('Gateway account session closed or expired');
+  }
+  pool(options: PoolOptions): PoolClient {
+    this.active();
+    return new PoolClient({ publisherKey: this.options.publisherKey, issuerOrigin: this.options.backendOrigin, publicKey: this.publicKey,
+      ...(this.options.verifierWasm ? { verifierWasm: this.options.verifierWasm } : {}), active: () => this.active(),
+      request: (operation, payload, signal) => this.poolRequest(operation, payload, signal),
+      sign: async (token, uri, workerKey, payload) => {
+        this.active();
+        return new SignJWT({ htm: 'POST', htu: uri, iat: now(), jti: random(16), ath: b64(sha256(encoder.encode(token))), pool_protocol: POOL, worker_key: workerKey, request_digest: hex(sha256(encoder.encode(payload))) })
+          .setProtectedHeader({ typ: 'dpop+jwt', alg: 'ES256', jwk: this.publicKey }).sign(this.key);
+      },
+    }, options);
+  }
+  private async poolRequest(operation: 'reserve' | 'grants' | 'attestation' | 'control' | 'exchange', data: unknown, signal?: AbortSignal): Promise<{ response: Response; requestId: string }> {
+    this.active();
+    const deadline = AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(610_000), ...(signal ? [signal] : [])]);
+    if (this.proof.evidence_expires_at <= now() + 30) {
+      const fresh = await attest(this.options, deadline, this.proof.policy_sequence);
+      if (fresh.encryption_key !== this.proof.encryption_key || fresh.authorization_key !== this.proof.authorization_key) throw new Error('Gateway restarted; reconnect required');
+      Object.assign(this.proof, fresh);
+    }
+    const requestId = random(16); const payload = JSON.stringify({ request_id: requestId, payload: data });
+    if (encoder.encode(payload).length > 23 * 1024 * 1024) throw new Error('Pool request exceeds limit');
+    const uri = this.options.gatewayOrigin + '/v1/pool/' + operation;
+    const proof = await GatewayClient.authorize(this.key, this.publicKey, this.session, uri, this.proof.encryption_key, payload);
+    const response = await this.transport.request(uri, { method: 'POST', body: JSON.stringify({ protocol: OUTER, session_id: this.session, proof, payload }), signal: deadline });
+    this.active(); GatewayClient.encrypted(response); return { response, requestId };
   }
   private static authorize(key: CryptoKey, publicKey: JsonWebKey, token: string, uri: string, gatewayKey: string, payload: string): Promise<string> {
     return new SignJWT({ htm: 'POST', htu: uri, iat: now(), jti: random(16), ath: b64(sha256(encoder.encode(token))), gateway_key: gatewayKey, request_digest: hex(sha256(encoder.encode(payload))) })
       .setProtectedHeader({ typ: 'dpop+jwt', alg: 'ES256', jwk: publicKey }).sign(key);
   }
 
-  /** Upload original bytes through attested EHBP; handles bind the session, model and next request. */
-  async upload(input: { bytes: Uint8Array; targetRequestId: string; model: string; kind: 'image' | 'file'; name: string; mimeType: string }, signal?: AbortSignal): Promise<string> {
-    if (!input.bytes.length || input.bytes.length > (input.kind === 'image' ? 5 : 10) * 1024 * 1024) throw new Error('Attachment exceeds limit');
-    const options = signal ? { signal } : {};
-    const release = this.retain();
-    try {
-      const result = await this.rpc({ op: 'upload_begin', upload: { target_request_id: input.targetRequestId, model: input.model, kind: input.kind, name: input.name, mime_type: input.mimeType, length: input.bytes.length, sha256: hex(sha256(input.bytes)) } }, undefined, options) as { upload_id?: string };
-      if (!/^[0-9a-f]{32}$/.test(result.upload_id ?? '')) throw new Error('Invalid upload handle');
-      const uploadId = result.upload_id!;
-      for (let offset = 0; offset < input.bytes.length; offset += 256 * 1024) {
-        const bytes = input.bytes.subarray(offset, offset + 256 * 1024);
-        let binary = '';
-        for (let at = 0; at < bytes.length; at += 16384) binary += String.fromCharCode(...bytes.subarray(at, at + 16384));
-        await this.rpc({ op: 'upload_chunk', upload_id: uploadId, offset, data: btoa(binary), final_chunk: offset + bytes.length === input.bytes.length }, undefined, options);
-      }
-      return uploadId;
-    } catch (error) {
-      await this.rpc({ op: 'upload_abort', target_request_id: input.targetRequestId }).catch(() => {});
-      throw error;
-    } finally { release(); }
-  }
-  async rpc(operation: { op: 'models' } | { op: 'infer'; request: Record<string, unknown>; uploads?: Array<{ upload_id: string; message_index: number }> } | { op: 'cancel'; target_request_id: string }
-    | { op: 'upload_begin'; upload: { target_request_id: string; model: string; kind: 'image' | 'file'; name: string; mime_type: string; length: number; sha256: string } }
-    | { op: 'upload_chunk'; upload_id: string; offset: number; data: string; final_chunk: boolean } | { op: 'upload_abort'; target_request_id: string },
+  async rpc(operation: { op: 'models' } | { op: 'infer'; request: Record<string, unknown> } | { op: 'cancel'; target_request_id: string },
     onProvisional: (frame: Frame) => void = () => {}, options: { signal?: AbortSignal; requestId?: string } = {}): Promise<unknown> {
-    const leave = this.lifecycle.enter();
-    try { return await this.requestRpc(operation, onProvisional, options); }
-    finally { leave(); }
-  }
-
-  private async requestRpc(operation: Parameters<GatewayClient['rpc']>[0] | { op: 'heartbeat' | 'session_close' },
-    onProvisional: (frame: Frame) => void, options: { signal?: AbortSignal; requestId?: string }): Promise<unknown> {
-    const started = Date.now();
-    if (this.expires <= now() || this.proof.policy_expires_at <= now()) throw new GatewaySessionError('session_expired');
+    this.active();
     if (this.proof.evidence_expires_at <= now() + 30) {
-      await this.proofRefresh.refresh(options.signal);
+      const fresh = await attest(this.options, options.signal, this.proof.policy_sequence);
+      if (fresh.encryption_key !== this.proof.encryption_key || fresh.authorization_key !== this.proof.authorization_key) throw new Error('Gateway restarted; reconnect required');
+      Object.assign(this.proof, fresh);
     }
-    if (options.signal?.aborted) options.signal.throwIfAborted();
-    if (this.expires <= now() || this.proof.policy_expires_at <= now() || this.proof.evidence_expires_at <= now()) throw new GatewaySessionError('session_expired');
     const requestId = options.requestId ?? random(16);
     if (!/^[0-9a-f]{32}$/.test(requestId)) throw new Error('Invalid request identity');
     const payload = JSON.stringify({ request_id: requestId, ...operation });
@@ -204,14 +173,10 @@ export class GatewayClient {
     const response = await this.transport.request(this.options.gatewayOrigin + '/v1/rpc', {
       method: 'POST', body: JSON.stringify({ protocol: PROTOCOL, session_id: this.session, proof, payload }),
       credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'error',
-      signal: AbortSignal.any([AbortSignal.timeout(610_000), ...(options.signal ? [options.signal] : [])]),
+      signal: AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(610_000), ...(options.signal ? [options.signal] : [])]),
     });
     GatewayClient.encrypted(response);
-    const result = (await readFrames(response.body!, requestId, onProvisional)).result;
-    // Start time is conservative: receiving a slow reply must not extend a
-    // server idle lease after that server has finished producing its response.
-    this.lifecycle.acknowledge(started);
-    return result;
+    return (await readFrames(response.body!, requestId, onProvisional)).result;
   }
 }
 

@@ -23,5 +23,20 @@ func main() {
 		return map[string]any{"result": string(out)}
 	})
 	js.Global().Set("axiomVerifyGatewayV2", fn)
+	pool := js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) != 1 || args[0].Type() != js.TypeString {
+			return map[string]any{"error": "worker attestation failed"}
+		}
+		raw := args[0].String()
+		if len(raw) > gateway.MaxInput {
+			return map[string]any{"error": "worker attestation failed"}
+		}
+		out, err := gateway.VerifyWorker([]byte(raw))
+		if err != nil {
+			return map[string]any{"error": "worker attestation failed"}
+		}
+		return map[string]any{"result": string(out)}
+	})
+	js.Global().Set("axiomVerifyPoolWorkerV1", pool)
 	select {}
 }
