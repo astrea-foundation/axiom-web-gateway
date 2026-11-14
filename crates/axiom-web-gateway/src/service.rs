@@ -572,6 +572,7 @@ async fn rpc(
     };
     let stream_replay = buffer.clone();
     let producer_replay = buffer.clone();
+    let reply = reply.with_image_limit(matches!(payload.operation, Operation::Image { .. }));
     let nonce = reply.nonce_hex.clone();
     let (sender, receiver) = mpsc::channel(16);
     let cancellation = state.shutdown.child_token();
