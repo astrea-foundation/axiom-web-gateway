@@ -234,7 +234,7 @@ dependencies = [
 [[package]]
 name = "axiom-inference"
 version = "0.1.0"
-source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=f360d614af57f31d817103441350030be6c244b6#f360d614af57f31d817103441350030be6c244b6"
+source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=b07e5dbceee449d83129678b77ca239635f71f40#b07e5dbceee449d83129678b77ca239635f71f40"
 dependencies = [
  "base64 0.22.1",
  "schemars",
@@ -245,7 +245,7 @@ dependencies = [
 [[package]]
 name = "axiom-openai-compat"
 version = "0.1.0"
-source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=f360d614af57f31d817103441350030be6c244b6#f360d614af57f31d817103441350030be6c244b6"
+source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=b07e5dbceee449d83129678b77ca239635f71f40#b07e5dbceee449d83129678b77ca239635f71f40"
 dependencies = [
  "axiom-inference",
  "serde",
@@ -256,7 +256,7 @@ dependencies = [
 [[package]]
 name = "axiom-pool-client"
 version = "0.1.0"
-source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=f360d614af57f31d817103441350030be6c244b6#f360d614af57f31d817103441350030be6c244b6"
+source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=b07e5dbceee449d83129678b77ca239635f71f40#b07e5dbceee449d83129678b77ca239635f71f40"
 dependencies = [
  "anyhow",
  "axiom-pool-protocol",
@@ -278,7 +278,7 @@ dependencies = [
 [[package]]
 name = "axiom-pool-protocol"
 version = "0.1.0"
-source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=f360d614af57f31d817103441350030be6c244b6#f360d614af57f31d817103441350030be6c244b6"
+source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=b07e5dbceee449d83129678b77ca239635f71f40#b07e5dbceee449d83129678b77ca239635f71f40"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -301,7 +301,7 @@ dependencies = [
 [[package]]
 name = "axiom-secure-client"
 version = "0.1.0"
-source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=f360d614af57f31d817103441350030be6c244b6#f360d614af57f31d817103441350030be6c244b6"
+source = "git+https://github.com/astrea-foundation/axiom-desktop.git?rev=b07e5dbceee449d83129678b77ca239635f71f40#b07e5dbceee449d83129678b77ca239635f71f40"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -317,6 +317,7 @@ dependencies = [
  "futures-util",
  "hex",
  "hkdf",
+ "image",
  "p384",
  "rand_core 0.6.4",
  "reqwest 0.13.4",
@@ -331,6 +332,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
+ "webp",
  "x25519-dalek",
  "x509-parser",
  "zeroize",
@@ -1624,6 +1626,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "glob"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
+
+[[package]]
 name = "group"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2206,6 +2214,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28d0a00925a9f930d679b6789b721e3a7f9ed110f41b86d2497caa780c3a070a"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "libwebp-sys"
+version = "0.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54cd30df7c7165ce74a456e4ca9732c603e8dc5e60784558c1c6dc047f876733"
+dependencies = [
+ "cc",
+ "glob",
 ]
 
 [[package]]
@@ -4326,6 +4344,15 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "webp"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c071456adef4aca59bf6a583c46b90ff5eb0b4f758fc347cea81290288f37ce1"
+dependencies = [
+ "libwebp-sys",
 ]
 
 [[package]]

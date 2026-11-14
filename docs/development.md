@@ -89,6 +89,17 @@ gateway completion. Account authorization and backend billing admission remain
 independent. The gateway's shared inference/openai-compat/secure-client revisions
 must advance together to the tested remotely published Desktop commit.
 
+The current pin also prepares lossy WebP vision copies with a useful quality
+floor, bounds account-local variant caches, and budgets NEAR's encrypted provider
+request at 10 MiB. When the relay lease advertises `relay_request_wire_versions:
+[2]`, the client sends the exact encrypted request once using the versioned
+binary NEAR route. Otherwise it selects the legacy JSON route before dispatch;
+an inference failure never authorizes replay through another format. Request
+hashing, local TEE verification, worker/session ownership and authenticated stream
+completion are unchanged. Deploy the compatible platform relay first, then
+qualify a new measured gateway build before browser rollout. Updating this source
+pin alone does not change a running enclave or the browser's history planner.
+
 The 2048² development image profile accepts 20 MiB image uploads/outputs and a
 128 MiB per-account upload pool so five full-size RGBA references fit. Ordinary
 files retain their 10 MiB bound. The SDK accepts the matching image area/byte
