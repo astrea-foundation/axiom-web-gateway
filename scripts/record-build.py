@@ -2,6 +2,7 @@
 """Record image content IDs and exact clean source inputs for offline signing."""
 import argparse
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
@@ -31,11 +32,12 @@ def main():
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     if revision != args.revision:
         raise ValueError("source revision changed during the build")
+    spec = importlib.util.spec_from_file_location("publish_documents", ROOT / "scripts/publish-documents.py")
+    publisher = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(publisher)
     images = {}
     for name in ["axiom-web-gateway", "axiom-gateway-verifier"]:
-        images[name] = subprocess.check_output([args.engine, "image", "inspect", "--format", "{{.Id}}", name + ":dev"], text=True).strip()
-        if not images[name].startswith("sha256:"):
-            images[name] = "sha256:" + images[name]
+        images[name] = publisher.image_config_digest(args.engine, name + ":dev")
     value = {"schema_version": 1, "source_revision": revision,
              "clean": not bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT).strip()),
              "build_recipe_sha256": recipe(), "cargo_lock_sha256": digest(ROOT / "Cargo.lock"),

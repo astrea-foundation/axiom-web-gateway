@@ -113,6 +113,10 @@ gh release download v0.0.1-staging.1 --repo astrea-foundation/axiom-web-gateway 
 
 Check out the exact clean source revision in the build record before signing,
 even if a later config-only commit in this same repository selected the image.
+An updated publisher can select that checkout with `--build-source /path/to/source`.
+Build records and publication compare the SHA-256 of the exported image
+configuration bytes. This retains the same identity across classic Docker and
+containerd image stores, where the displayed image ID can instead be a manifest.
 From that source revision, sign Axiom's mapping and
 short-lived policy using the separately managed offline Ed25519 authority. The offline publisher is a trusted release authority; keep its key separate from
 the builder and runtime. `out/build-record.json` records immutable image content

@@ -43,7 +43,7 @@
   "containers": [
     {
       "name": "gateway",
-      "image": "ghcr.io/astrea-foundation/axiom-web-gateway@sha256:9d6ef0054ecef46f3eff24b102687d5f2a3157cf47b638bdb90c917b0740b7ef",
+      "image": "ghcr.io/astrea-foundation/axiom-web-gateway@sha256:6958ca0a30d1f8eac1255d5df0afeefe5f632a4b21cb73b19f76d82802dfc574",
       "user": "10001:10001",
       "attestation": true,
       "keys": [
@@ -69,7 +69,7 @@
       "pids_limit": 128,
       "env": [
         {
-          "AXIOM_GATEWAY_CONFIG_JSON": "{\"listen\":\"0.0.0.0:8080\",\"public_origin\":\"https://axiom-gateway.axiomai.containers.tinfoil.dev\",\"backend_origin\":\"https://api.axiom.stream\",\"publisher_key\":\"c14866d87b4feb6ba248a6ffe314c6cf835117c995332c350930105990de83d7\",\"browser_origins\":[\"https://chat.axiom.stream\",\"https://auth.axiom.stream\"],\"max_concurrency\":8,\"max_sessions\":64,\"attestation_socket\":\"/tinfoil/attestation.sock\",\"encryption_key_path\":\"/run/tinfoil/keys/axiom-encryption/private_key.pem\",\"authorization_key_path\":\"/run/tinfoil/keys/axiom-authorization/private_key.pem\",\"verifier\":\"/usr/local/bin/axiom-gateway-verify\"}"
+          "AXIOM_GATEWAY_CONFIG_JSON": "{\"listen\":\"0.0.0.0:8080\",\"public_origin\":\"https://axiom-gateway.axiomai.containers.tinfoil.dev\",\"backend_origin\":\"https://api.axiom.stream\",\"publisher_key\":\"c14866d87b4feb6ba248a6ffe314c6cf835117c995332c350930105990de83d7\",\"browser_origins\":[\"https://chat.axiom.stream\",\"https://auth.axiom.stream\"],\"max_concurrency\":32,\"max_sessions\":512,\"attestation_socket\":\"/tinfoil/attestation.sock\",\"encryption_key_path\":\"/run/tinfoil/keys/axiom-encryption/private_key.pem\",\"authorization_key_path\":\"/run/tinfoil/keys/axiom-authorization/private_key.pem\",\"verifier\":\"/usr/local/bin/axiom-gateway-verify\"}"
         },
         {
           "AXIOM_DIRECT_CLIENT_CONFIG_FILE": "/etc/axiom/astreaai-production.json"

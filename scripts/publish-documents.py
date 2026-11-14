@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import tarfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +23,28 @@ ROOT = Path(__file__).resolve().parents[1]
 def digest(path):
     with Path(path).open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def archive_config_digest(path):
+    with tarfile.open(path) as archive:
+        manifest = json.load(archive.extractfile("manifest.json"))
+        if len(manifest) != 1:
+            raise ValueError("one exported image configuration required")
+        name = manifest[0]["Config"]
+        if not isinstance(name, str) or name.startswith("/") or ".." in Path(name).parts:
+            raise ValueError("invalid exported image configuration path")
+        entries = [entry for entry in archive.getmembers() if entry.name == name]
+        if len(entries) != 1 or not entries[0].isfile() or entries[0].size > 1024 * 1024:
+            raise ValueError("bounded ordinary image configuration required")
+        return "sha256:" + hashlib.sha256(archive.extractfile(entries[0]).read()).hexdigest()
+
+
+def image_config_digest(engine, image):
+    # Authenticate configuration bytes on both classic and containerd stores.
+    with tempfile.TemporaryDirectory(prefix="axiom-image-config-") as folder:
+        archive = Path(folder) / "image.tar"
+        subprocess.run([engine, "save", "--output", str(archive), image], check=True)
+        return archive_config_digest(archive)
 
 
 def signed(payload, domain, key):
@@ -36,7 +59,9 @@ def signed(payload, domain, key):
 
 
 def workload(args):
-    if subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip():
+    source = getattr(args, "build_source", None)
+    root = Path(source).resolve(strict=True) if source else ROOT
+    if subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True).strip():
         raise ValueError("build provenance requires a clean committed checkout")
     raw = Path(args.deployment).read_bytes()
     if len(raw) > 1024 * 1024:
@@ -53,7 +78,7 @@ def workload(args):
         raise ValueError("immutable gateway image required")
     runtime = next(v["AXIOM_GATEWAY_CONFIG_JSON"] for v in containers[0]["env"] if "AXIOM_GATEWAY_CONFIG_JSON" in v)
     runtime = json.loads(runtime)
-    spec = importlib.util.spec_from_file_location("prepare_tinfoil", ROOT / "scripts/prepare-tinfoil.py")
+    spec = importlib.util.spec_from_file_location("prepare_tinfoil", root / "scripts/prepare-tinfoil.py")
     prepare = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(prepare)
     with tempfile.TemporaryDirectory() as output:
@@ -74,27 +99,26 @@ def workload(args):
     if not all(re.fullmatch(r"[0-9a-f]{96}", value) for value in registers):
         raise ValueError("invalid build measurements")
     build = json.loads(Path(args.build_record).read_text())
-    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    spec = importlib.util.spec_from_file_location("record_build", ROOT / "scripts/record-build.py")
+    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    spec = importlib.util.spec_from_file_location("record_build", root / "scripts/record-build.py")
     record = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(record)
     if (build.get("schema_version") != 1 or build.get("clean") is not True
             or build["source_revision"] != revision or build["build_recipe_sha256"] != record.recipe()
-            or build["cargo_lock_sha256"] != digest(ROOT / "Cargo.lock")
-            or build["verifier_lock_sha256"] != digest(ROOT / "verifier/go.sum")):
+            or build["cargo_lock_sha256"] != digest(root / "Cargo.lock")
+            or build["verifier_lock_sha256"] != digest(root / "verifier/go.sum")):
         raise ValueError("build record does not match this clean source revision")
     # A published image's immutable configuration ID commits to all of its
     # layers. It must be the image produced by the recorded trusted build.
     subprocess.run([args.engine, "pull", image], check=True)
-    image_id = subprocess.check_output([args.engine, "image", "inspect", "--format", "{{.Id}}", image], text=True).strip()
-    image_id = image_id if image_id.startswith("sha256:") else "sha256:" + image_id
+    image_id = image_config_digest(args.engine, image)
     if image_id != build["images"]["axiom-web-gateway"]:
         raise ValueError("published image differs from the recorded build")
     return {"schema_version": 2, "generation": args.generation,
             "source_repository": "https://github.com/astrea-foundation/axiom-web-gateway",
             "source_revision": revision,
-            "build_recipe_sha256": build["build_recipe_sha256"], "cargo_lock_sha256": digest(ROOT / "Cargo.lock"),
-            "verifier_lock_sha256": digest(ROOT / "verifier/go.sum"),
+            "build_recipe_sha256": build["build_recipe_sha256"], "cargo_lock_sha256": digest(root / "Cargo.lock"),
+            "verifier_lock_sha256": digest(root / "verifier/go.sum"),
             "gateway_image_digest": image.split("@", 1)[1], "config_repository": args.config_repository,
             "config_digest": hashlib.sha256(raw).hexdigest(),
             "code_measurement": {"type": "https://tinfoil.sh/predicate/snp-tdx-multiplatform/v1", "registers": registers},
@@ -110,6 +134,7 @@ def main():
     parser.add_argument("--generation", type=int, required=True)
     parser.add_argument("--sequence", type=int)
     parser.add_argument("--build-record", help="record from the trusted clean container build")
+    parser.add_argument("--build-source", help="clean checkout of the exact build-record source revision")
     parser.add_argument("--engine", choices=["podman", "docker"], default="podman")
     parser.add_argument("--deployment", help="published tinfoil-deployment.json build artifact")
     args = parser.parse_args()
