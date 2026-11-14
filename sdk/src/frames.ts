@@ -1,5 +1,5 @@
 import { sha256 } from '@noble/hashes/sha2.js';
-import { GatewaySessionError, sessionRejection, requestFailure } from './errors.js';
+import { GatewaySessionError, GatewayStreamInterruptedError, sessionRejection, requestFailure } from './errors.js';
 
 export const PROTOCOL = 'axiom-gateway-v2';
 const MAX_FRAME = 1024 * 1024;
@@ -32,7 +32,10 @@ export async function readFrames(
   let generationObserved = false;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await reader.read().catch(error => {
+        if (error instanceof TypeError) throw new GatewayStreamInterruptedError({ cause: error });
+        throw error;
+      });
       if (done) break;
       total += value.byteLength;
       if (total > MAX_RESPONSE) throw new Error('Gateway response exceeds limit');
@@ -69,9 +72,9 @@ export async function readFrames(
       pending = joined.slice(start);
       if (pending.length > MAX_FRAME) throw new Error('Gateway frame exceeds limit');
     }
-    if (pending.length) throw new Error('Gateway stream was interrupted');
+    if (pending.length) throw new GatewayStreamInterruptedError();
     if (rejected) throw rejected;
-    if (!terminal) throw new Error('Gateway stream was interrupted');
+    if (!terminal) throw new GatewayStreamInterruptedError();
     if (!terminal.success) {
       const result = terminal.result && typeof terminal.result === 'object'
         ? { ...terminal.result, ...(generationObserved ? { pre_generation: false } : {}) }

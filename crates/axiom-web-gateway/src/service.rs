@@ -66,6 +66,7 @@ pub struct Session {
     activity: Arc<Activity>,
     replays: Mutex<BTreeMap<String, u64>>,
     requests: Mutex<BTreeMap<String, u64>>,
+    replies: Mutex<BTreeMap<String, Arc<crate::recovery::Replay>>>,
 }
 
 // Match the verifier's clock tolerance, without extending a local lifetime.
@@ -102,6 +103,9 @@ enum Operation {
     Heartbeat,
     SessionClose,
     Models,
+    Resume {
+        target_request_id: String,
+    },
     ImageCapabilities,
     Image {
         model: String,
@@ -438,12 +442,13 @@ async fn session(
                 activity: Activity::new(now()),
                 replays: Mutex::new(BTreeMap::new()),
                 requests: Mutex::new(BTreeMap::new()),
+                replies: Mutex::new(BTreeMap::new()),
             });
         let mut sessions = state.sessions.lock().await;
         let mut uploads = state.uploads.lock().await;
         admit_session(&mut sessions, &mut uploads, candidate, state.config.max_sessions, now())?;
         Ok::<_, anyhow::Error>(json!({"protocol":PROTOCOL,"session_id":id,"expires_at":expires_at,
-            "session_lifecycle":{"version":1,"heartbeat_interval_seconds":HEARTBEAT_SECONDS,"idle_timeout_seconds":IDLE_SECONDS}}))
+            "stream_recovery":1,"session_lifecycle":{"version":1,"heartbeat_interval_seconds":HEARTBEAT_SECONDS,"idle_timeout_seconds":IDLE_SECONDS}}))
     }
     .await;
     let payload = match result {
@@ -541,6 +546,32 @@ async fn rpc(
             Err(_) => rejected(StatusCode::BAD_REQUEST),
         };
     };
+    // Reclaim terminal buffers on every RPC; memory is globally bounded even
+    // when tabs disappear without closing their sessions.
+    for entry in state.sessions.lock().await.values() {
+        entry
+            .replies
+            .lock()
+            .await
+            .retain(|_, value| !value.expired());
+    }
+    if let Operation::Resume { target_request_id } = &payload.operation {
+        return resume_response(&state, &session, target_request_id, reply, activity).await;
+    }
+    let buffer = if matches!(payload.operation, Operation::Infer { .. }) {
+        let mut replies = session.replies.lock().await;
+        if replies.len() < 4 && !replies.contains_key(&payload.request_id) {
+            crate::recovery::Replay::new().inspect(|log| {
+                replies.insert(payload.request_id.clone(), Arc::clone(log));
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let stream_replay = buffer.clone();
+    let producer_replay = buffer.clone();
     let nonce = reply.nonce_hex.clone();
     let (sender, receiver) = mpsc::channel(16);
     let cancellation = state.shutdown.child_token();
@@ -550,17 +581,25 @@ async fn rpc(
         let active_key = (session.account.clone(), payload.request_id.clone());
         let owner = rand::random::<[u8; 16]>();
         let mut output = Output {
+            replay: buffer,
             reply,
             sender,
             digest: Sha256::new(),
             request_id: payload.request_id.clone(),
             sequence: 0,
         };
-        let result = tokio::time::timeout(
+        let work = tokio::time::timeout(
             Duration::from_secs(600),
             execute(&state, &session, payload, &cancellation, owner, &mut output),
-        )
-        .await;
+        );
+        let result = if let Some(log) = producer_replay {
+            tokio::select! {
+                result = work => result,
+                () = log.abandoned() => { cancellation.cancel(); Ok(Err(anyhow::anyhow!("reply subscriber grace expired"))) }
+            }
+        } else {
+            work.await
+        };
         let mut active = state.active.lock().await;
         if active
             .get(&active_key)
@@ -589,13 +628,73 @@ async fn rpc(
         Body::from_stream(CancelStream {
             inner: tokio_stream::wrappers::ReceiverStream::new(receiver),
             cancellation: stream_cancel,
+            replay: stream_replay,
         }),
+    )
+}
+
+async fn resume_response(
+    state: &Arc<State>,
+    session: &Arc<Session>,
+    target: &str,
+    mut reply: Reply,
+    activity: crate::sessions::Use,
+) -> Response {
+    let log = session.replies.lock().await.get(target).cloned();
+    let Some(log) = log.filter(|log| !log.expired()) else {
+        return rejected(StatusCode::GONE);
+    };
+    let subscriber = log.attach();
+    let nonce = reply.nonce_hex.clone();
+    let (sender, receiver) = mpsc::channel(16);
+    let cancel = state.shutdown.child_token();
+    let expires = session.expires_at;
+    tokio::spawn(async move {
+        let (_activity, _subscriber) = (activity, subscriber);
+        let mut index = 0;
+        loop {
+            let changed = log.changed.notified();
+            if expires <= now() {
+                break;
+            }
+            match log.frame(index).await {
+                Ok((Some(frame), _)) => {
+                    let Ok(bytes) = reply.frame(&frame) else {
+                        break;
+                    };
+                    let sent = tokio::select! {
+                        () = cancel.cancelled() => break,
+                        result = tokio::time::timeout(Duration::from_secs(30), sender.send(Ok::<_, std::io::Error>(Bytes::from(bytes)))) => result,
+                    };
+                    if !matches!(sent, Ok(Ok(()))) {
+                        break;
+                    }
+                    index += 1;
+                }
+                Ok((None, true)) => return,
+                Ok((None, false)) => tokio::select! {
+                    () = cancel.cancelled() => break,
+                    () = sender.closed() => break,
+                    () = tokio::time::sleep(Duration::from_secs(30)) => {},
+                    () = changed => {},
+                },
+                Err(_) => break,
+            }
+        }
+        let _ = sender
+            .send(Err(std::io::Error::other("response recovery interrupted")))
+            .await;
+    });
+    encrypted_response(
+        &nonce,
+        Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(receiver)),
     )
 }
 
 struct CancelStream {
     inner: tokio_stream::wrappers::ReceiverStream<std::result::Result<Bytes, std::io::Error>>,
     cancellation: CancellationToken,
+    replay: Option<Arc<crate::recovery::Replay>>,
 }
 impl futures_util::Stream for CancelStream {
     type Item = std::result::Result<Bytes, std::io::Error>;
@@ -608,11 +707,16 @@ impl futures_util::Stream for CancelStream {
 }
 impl Drop for CancelStream {
     fn drop(&mut self) {
-        self.cancellation.cancel();
+        if let Some(log) = &self.replay {
+            log.detach();
+        } else {
+            self.cancellation.cancel();
+        }
     }
 }
 
 struct Output {
+    replay: Option<Arc<crate::recovery::Replay>>,
     reply: Reply,
     sender: mpsc::Sender<std::result::Result<Bytes, std::io::Error>>,
     digest: Sha256,
@@ -626,6 +730,9 @@ impl Output {
         plaintext.push(b'\n');
         self.digest.update(&plaintext);
         let bytes = self.reply.frame(&frame)?;
+        if let Some(log) = &self.replay {
+            log.append(&frame).await?;
+        }
         self.sequence += 1;
         tokio::time::timeout(
             Duration::from_secs(30),
@@ -634,6 +741,13 @@ impl Output {
         .await
         .context("browser backpressure deadline")?
         .map_err(|_| anyhow::anyhow!("browser disconnected"))
+        .or_else(|error| {
+            if self.replay.is_some() {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        })
     }
     async fn terminal(&mut self, success: bool, result: Value) -> Result<()> {
         let digest = hex::encode(self.digest.clone().finalize());
@@ -685,6 +799,7 @@ async fn execute(
     output: &mut Output,
 ) -> Result<Value> {
     match payload.operation {
+        Operation::Resume { .. } => anyhow::bail!("resume must attach to its original execution"),
         Operation::Heartbeat => {
             session.activity.heartbeat(now());
             Ok(json!({"alive":true,"expires_at":session.expires_at}))
@@ -1114,6 +1229,7 @@ mod tests {
             activity: Activity::new(current),
             replays: Mutex::new(BTreeMap::new()),
             requests: Mutex::new(BTreeMap::new()),
+            replies: Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -1257,6 +1373,7 @@ mod tests {
         let (sender, receiver) = mpsc::channel(16);
         (
             Output {
+                replay: None,
                 reply,
                 sender,
                 digest: Sha256::new(),

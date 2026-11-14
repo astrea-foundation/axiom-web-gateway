@@ -1,5 +1,11 @@
 export type SessionErrorCode = 'session_capacity' | 'session_rejected' | 'session_expired' | 'session_closed';
 
+/** Only transport interruption permits reattaching to an existing execution.
+ * Authentication, request binding, order and digest failures stay terminal. */
+export class GatewayStreamInterruptedError extends Error {
+  constructor(options?: ErrorOptions) { super('Gateway stream was interrupted', options); this.name = 'GatewayStreamInterruptedError'; }
+}
+
 /** Only bounded operational codes from an authenticated gateway response. */
 export class GatewaySessionError extends Error {
   constructor(readonly code: SessionErrorCode, options?: ErrorOptions) {
@@ -30,12 +36,14 @@ export function sessionRejection(code: unknown): GatewaySessionError {
 }
 
 const requestStages = new Set(['request_validation','model_catalog','model_selection','trust_policy','upstream_attestation','upstream_exchange','upload_binding','capacity']);
-const requestCodes = new Set(['REQUEST_FAILED','CONFIGURATION_ERROR','AUTHENTICATION_FAILED','INSUFFICIENT_CREDIT','RATE_LIMITED','TRIAL_CAPACITY','MODEL_UNAVAILABLE','CAPABILITY_MISMATCH','ATTESTATION_UNAVAILABLE','ATTESTATION_REJECTED','ATTESTATION_EXPIRED','ATTESTATION_KEY_CHANGED','PROTOCOL_UNSUPPORTED','SESSION_NOT_ACCEPTED','RECEIPT_UNAVAILABLE','CONTEXT_LENGTH_EXCEEDED','INVALID_REQUEST','INVALID_RESPONSE','CANCELLED','TRANSIENT_FAILURE','STREAM_TIMEOUT','RESPONSE_TOO_LARGE','PROVIDER_DISCONNECTED']);
+const requestCodes = new Set(['REQUEST_FAILED','CONFIGURATION_ERROR','AUTHENTICATION_FAILED','INSUFFICIENT_CREDIT','RATE_LIMITED','TRIAL_CAPACITY','MODEL_UNAVAILABLE','CAPABILITY_MISMATCH','ATTESTATION_UNAVAILABLE','ATTESTATION_REJECTED','ATTESTATION_EXPIRED','ATTESTATION_KEY_CHANGED','PROTOCOL_UNSUPPORTED','SESSION_NOT_ACCEPTED','RECEIPT_UNAVAILABLE','CONTEXT_LENGTH_EXCEEDED','INVALID_REQUEST','INVALID_RESPONSE','CANCELLED','TRANSIENT_FAILURE','STREAM_TIMEOUT','STREAM_INTERRUPTED','RESPONSE_TOO_LARGE','PROVIDER_DISCONNECTED']);
 /** Operational metadata authenticated to this request; never provider error text. */
 export class GatewayRequestError extends Error {
   constructor(readonly code: string, readonly stage?: string, readonly retryAt?: number, readonly preGeneration = false) {
-    super(code === 'RATE_LIMITED' ? 'AstreaAI is busy. Try again shortly.'
+    super(code === 'RATE_LIMITED' ? 'The provider is busy. Try again shortly.'
       : code === 'INSUFFICIENT_CREDIT' ? 'Insufficient balance. Top up your Axiom balance to continue.'
+      : code === 'PROVIDER_DISCONNECTED' || code === 'STREAM_INTERRUPTED' ? 'The connection was interrupted and the reply couldn’t finish. Your conversation is saved.'
+      : code === 'STREAM_TIMEOUT' ? 'The model stopped responding. Your conversation is saved.'
       : stage ? `Gateway request failed during ${stage} (${code})` : 'Gateway completion failed');
     this.name = 'GatewayRequestError';
   }

@@ -6,9 +6,9 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { PROTOCOL, readFrames, type Frame } from './frames.js';
 import { delegationDeadline } from './expiry.js';
 import { ProofRefresh } from './proof.js';
-import { GatewayAccountError, GatewaySessionError, sessionRejection } from './errors.js';
+import { GatewayAccountError, GatewaySessionError, GatewayStreamInterruptedError, sessionRejection } from './errors.js';
 import { SessionLifecycle } from './session-lifecycle.js';
-export { GatewayAccountError, GatewaySessionError, GatewayRestartedError, GatewayRequestError } from './errors.js';
+export { GatewayAccountError, GatewaySessionError, GatewayRestartedError, GatewayRequestError, GatewayStreamInterruptedError } from './errors.js';
 export { requestImage, type GatewayImage, type ImageReference, type ImageProgress } from './image.js';
 export { type Frame } from './frames.js';
 
@@ -91,6 +91,7 @@ export class GatewayClient {
     private readonly publicKey: JsonWebKey, private readonly session: string,
     private readonly expires: number,
     lifecycleSupported: boolean,
+    private readonly resumable = false,
   ) {
     this.proof = proof;
     this.proofRefresh = new ProofRefresh(proof, (minimum, signal) => attest(options, signal, minimum));
@@ -143,7 +144,7 @@ export class GatewayClient {
       const expires = delegationDeadline(value.data.expires_at, now(), 900);
       const lifecycle = value.data.session_lifecycle;
       if (lifecycle !== undefined && (lifecycle.version !== 1 || lifecycle.heartbeat_interval_seconds !== 60 || lifecycle.idle_timeout_seconds !== 180)) throw new GatewaySessionError('session_rejected');
-      return new GatewayClient(options, proof, transport, keys.privateKey, publicKey, value.data.session_id, expires, lifecycle !== undefined);
+      return new GatewayClient(options, proof, transport, keys.privateKey, publicKey, value.data.session_id, expires, lifecycle !== undefined, value.data.stream_recovery === 1);
     } catch (error) {
       if (error instanceof GatewaySessionError) throw error;
       throw new GatewaySessionError('session_rejected', { cause: error });
@@ -183,14 +184,51 @@ export class GatewayClient {
     | { op: 'image_capabilities' } | { op: 'image'; model: string; prompt: string; references?: Array<{id:string;upload_id:string}>; dimensions?:{width:number;height:number}; aspect_ratio?:string }
     | { op: 'upload_begin'; upload: { target_request_id: string; model: string; kind: 'image' | 'file'; name: string; mime_type: string; length: number; sha256: string } }
     | { op: 'upload_chunk'; upload_id: string; offset: number; data: string; final_chunk: boolean } | { op: 'upload_abort'; target_request_id: string },
-    onProvisional: (frame: Frame) => void = () => {}, options: { signal?: AbortSignal; requestId?: string } = {}): Promise<unknown> {
+    onProvisional: (frame: Frame) => void = () => {}, options: { signal?: AbortSignal; requestId?: string; onRecovery?: (attempt: number) => void } = {}): Promise<unknown> {
     const leave = this.lifecycle.enter();
-    try { return await this.requestRpc(operation, onProvisional, options); }
+    try {
+      const requestId = options.requestId ?? random(16);
+      const signal = AbortSignal.any([AbortSignal.timeout(610_000), ...(options.signal ? [options.signal] : [])]);
+      let seen = -1;
+      const acceptedDigest = sha256.create();
+      // Every replay is authenticated and hashed from sequence zero. Only
+      // already-delivered display frames are suppressed, never verification.
+      for (let attempt = 0; ; attempt++) {
+        signal.throwIfAborted();
+        const previousSeen = seen, previousDigest = hex(acceptedDigest.clone().digest());
+        const replayDigest = sha256.create();
+        let prefixMatched = previousSeen < 0;
+        const deliver = (frame: Frame) => {
+          const bytes = encoder.encode(JSON.stringify(frame));
+          replayDigest.update(bytes);
+          if (frame.sequence <= previousSeen) {
+            if (frame.sequence === previousSeen) {
+              if (hex(replayDigest.clone().digest()) !== previousDigest) throw new Error('Gateway replay changed an accepted frame');
+              prefixMatched = true;
+            }
+            return;
+          }
+          if (!prefixMatched) throw new Error('Gateway replay omitted accepted frames');
+          onProvisional(frame); acceptedDigest.update(bytes); seen = frame.sequence;
+        };
+        try {
+          const result = await this.requestRpc(attempt === 0 ? operation : { op: 'resume', target_request_id: requestId }, deliver,
+            { signal, requestId: attempt === 0 ? requestId : random(16), ...(attempt ? { responseRequestId: requestId } : {}) });
+          if (!prefixMatched) throw new Error('Gateway replay omitted accepted frames');
+          return result;
+        } catch (error) {
+          signal.throwIfAborted();
+          if (operation.op !== 'infer' || !this.resumable || attempt >= 2 || !(error instanceof GatewayStreamInterruptedError)) throw error;
+          options.onRecovery?.(attempt + 1);
+          await recoveryDelay(attempt + 1, signal);
+        }
+      }
+    }
     finally { leave(); }
   }
 
-  private async requestRpc(operation: Parameters<GatewayClient['rpc']>[0] | { op: 'heartbeat' | 'session_close' },
-    onProvisional: (frame: Frame) => void, options: { signal?: AbortSignal; requestId?: string }): Promise<unknown> {
+  private async requestRpc(operation: Parameters<GatewayClient['rpc']>[0] | { op: 'heartbeat' | 'session_close' } | { op: 'resume'; target_request_id: string },
+    onProvisional: (frame: Frame) => void, options: { signal?: AbortSignal; requestId?: string; responseRequestId?: string }): Promise<unknown> {
     const started = Date.now();
     if (this.expires <= now() || this.proof.policy_expires_at <= now()) throw new GatewaySessionError('session_expired');
     if (this.proof.evidence_expires_at <= now() + 30) {
@@ -212,7 +250,7 @@ export class GatewayClient {
       });
       signal.throwIfAborted();
       GatewayClient.encrypted(response);
-      const result = (await readFrames(response.body!, requestId, frame => {
+      const result = (await readFrames(response.body!, options.responseRequestId ?? requestId, frame => {
         signal.throwIfAborted();
         onProvisional(frame);
         signal.throwIfAborted();
@@ -229,6 +267,17 @@ export class GatewayClient {
       throw error;
     }
   }
+}
+
+function recoveryDelay(attempt: number, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => { clearTimeout(timer); signal.removeEventListener('abort', abort); reject(signal.reason); };
+    const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); },
+      (attempt === 1 ? 1000 : 3000) + Math.floor(Math.random() * 250));
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+  });
 }
 
 /** Uses existing HttpOnly account session + CSRF; account credentials never go to the gateway. */
