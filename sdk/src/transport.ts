@@ -1,4 +1,5 @@
 import { Identity } from 'ehbp';
+import { GatewayStreamInterruptedError } from './errors.js';
 /** EHBP to the attested application key. Distinct header names keep the public
  * Tinfoil shim from terminating or removing this application encryption. */
 export class GatewayTransport {
@@ -11,7 +12,10 @@ export class GatewayTransport {
     const encapsulated = headers.get('ehbp-encapsulated-key');
     if (!encapsulated) throw new Error('Encrypted gateway request required');
     headers.delete('ehbp-encapsulated-key'); headers.set('axiom-encapsulated-key', encapsulated);
-    const response = await fetch(new Request(request, { headers }));
+    const response = await fetch(new Request(request, { headers })).catch(error => {
+      if (error instanceof TypeError) throw new GatewayStreamInterruptedError({ cause: error });
+      throw error;
+    });
     const nonce = response.headers.get('axiom-response-nonce');
     if (!response.ok || !nonce || !/^[0-9a-f]{64}$/.test(nonce) || !response.body) throw new Error('Authenticated gateway response required');
     const authenticated = new Headers(response.headers);

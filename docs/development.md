@@ -49,8 +49,9 @@ the running gateway only after a separately qualified measured release.
 `scripts/prepare-direct-verifier.py` resolves that bundle from Cargo's locked
 remote dependency and checks every file against its provenance manifest.
 No neighboring checkout or private inference repository is a build input.
-The runtime installs hash-locked Python dependencies, builds the verifier and
-binds its actual executable digest into the image's public AstreaAI staging
+The build host vendors both locked Rust dependency graphs, and the container
+compiles the native `axiom-direct-verify` binary offline. No Python or OpenSSL
+runtime is needed for AstreaAI verification. The image binds its actual executable digest into the image's public AstreaAI staging
 configuration. The file is private to runtime UID 10001 and contains public pins,
 prices and a spending ceiling; account authority always comes from each browser
 session's delegated credential.
@@ -79,3 +80,19 @@ not deploy or run on pushes. This public repository also owns the root measured
 `tinfoil-config.yml` and Tinfoil's pinned, manually dispatched release workflows.
 Staging uses `dev` and distinct prerelease tags. Production `main` promotion and
 production deployment require explicit authorization.
+
+The shared NEAR client also supports exact client-authenticated request bytes
+and raw streaming wire version 1. The enclave receives and decrypts bounded raw
+provider chunks provisionally, then verifies the selected worker receipt against
+the complete ordered bytes, model and request before emitting authenticated
+gateway completion. Account authorization and backend billing admission remain
+independent. The gateway's shared inference/openai-compat/secure-client revisions
+must advance together to the tested remotely published Desktop commit.
+
+The 2048² development image profile accepts 20 MiB image uploads/outputs and a
+128 MiB per-account upload pool so five full-size RGBA references fit. Ordinary
+files retain their 10 MiB bound. The SDK accepts the matching image area/byte
+bounds and a bounded 64 MiB reply stream. Shared inference dependencies must
+advance together to the Desktop commit that contains the separate reference
+normalizer and larger signed image grants; coordinate with the worker and API
+rollout and the encrypted-file size migration before enabling 2K clients.

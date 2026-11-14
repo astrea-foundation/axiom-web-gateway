@@ -1,5 +1,6 @@
 mod attestation;
 mod lifecycle;
+mod recovery;
 mod service;
 mod sessions;
 mod startup;

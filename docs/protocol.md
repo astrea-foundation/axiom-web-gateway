@@ -214,5 +214,46 @@ uses a separate five-second deadline so cancelling an upload cannot wait for the
 ordinary ten-minute inference timeout. Cleanup failure never authorizes a replay.
 A failed terminal exposes only finite operational
 codes and phases, after transcript and EOF authentication; provider error text,
-prompts, credentials and image bytes never enter diagnostics. Requests are not
-automatically replayed after a failure.
+prompts, credentials and image bytes never enter diagnostics. The SDK does not
+automatically replay failed requests.
+
+An explicit provider context rejection may expose the finite code
+`CONTEXT_LENGTH_EXCEEDED` and `pre_generation:true`. The shared provider client
+classifies only an authenticated rejection before any completion event and
+after clean provider EOF. Ordinary HTTP errors, relay diagnostics, generic
+`INVALID_REQUEST` failures and ambiguous disconnects grant no replay permission.
+The SDK exposes `GatewayRequestError.preGeneration` only after gateway terminal
+transcript binding and authenticated EOF, in `request_validation` or
+`upstream_exchange`, and withholds it if generation or unknown frames preceded
+the terminal. A client may use this narrow condition for bounded local
+compaction followed by a fresh encrypted request. Tools and ambiguous requests
+must never be replayed as context recovery.
+
+## Reattaching an interrupted reply
+
+A session advertises optional `stream_recovery: 1`. For inference only, the SDK
+can issue two `resume` RPCs after transport interruption, with roughly one and
+three seconds of abortable backoff and jitter. Each resume uses a fresh request
+identity/DPoP proof and binds `target_request_id` to the original execution. It
+must use the same authenticated account session. Resumption never dispatches
+another model request, upload, image job or tool action.
+
+The attested process keeps a zeroizing replay buffer: at most 4 MiB per reply,
+four replies per session and sixteen buffers globally. A larger response proceeds
+without caching; it cannot resume. Buffers expire sixty seconds after terminal
+completion and are reclaimed on subsequent RPCs/session release. A disconnected
+producer waits at most thirty seconds for a subscriber; after that it cancels.
+Ordinary execution (600 seconds), session expiry, proof and shutdown limits
+remain binding. Explicit Cancel bypasses the subscriber grace period.
+
+A resumed connection encrypts the original ordered frames under its fresh EHBP
+context. The SDK rechecks the entire transcript from sequence zero, request
+binding, terminal and authenticated EOF. It also compares the replayed prefix to
+already accepted frames before suppressing duplicate display updates. A changed
+prefix, invalid tag, order/digest substitution or missing final authentication
+cannot produce success or authorize fresh inference. Reconnects preserve the
+original deadline; older gateways receive no resume operations.
+
+Typed upstream failures are returned normally after recovery. A fresh generation
+requires a separate account-authorized backend recovery grant that reconciles
+its predecessor's charge; the gateway never blindly resends provider ciphertext.

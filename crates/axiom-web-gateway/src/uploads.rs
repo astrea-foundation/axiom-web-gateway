@@ -9,7 +9,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use zeroize::Zeroizing;
 
 const CHUNK: usize = 256 * 1024;
-const ACCOUNT_BYTES: usize = 64 * 1024 * 1024;
+const ACCOUNT_BYTES: usize = 128 * 1024 * 1024;
 const TOTAL_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Deserialize)]
@@ -95,7 +95,7 @@ impl Uploads {
                         .contains(&request.mime_type.as_str()),
                     "invalid image type"
                 );
-                5 * 1024 * 1024
+                20 * 1024 * 1024
             }
             "file" => {
                 ensure!(
@@ -320,6 +320,24 @@ impl Uploads {
 mod tests {
     use super::*;
     use axiom_web_gateway_core::inference::{ChatMessage, ChatRole};
+
+    #[test]
+    fn five_lossless_2k_references_fit_the_bounded_account_upload_pool() {
+        let mut uploads = Uploads::default();
+        for _ in 0..5 {
+            let mut request = begin(&[1]);
+            request.kind = "image".into();
+            request.mime_type = "image/png".into();
+            request.length = 20 * 1024 * 1024;
+            uploads.begin("a", "s", request, 100, 900).unwrap();
+        }
+        assert_eq!(uploads.0.len(), 5);
+        let mut request = begin(&[1]);
+        request.kind = "image".into();
+        request.mime_type = "image/png".into();
+        request.length = 20 * 1024 * 1024 + 1;
+        assert!(uploads.begin("a", "s", request, 100, 900).is_err());
+    }
     #[test]
     fn image_references_preserve_order_and_reject_cross_owner_session_target_and_replay() {
         // Upload transport fixtures; native verification and decoding remain separate gates.

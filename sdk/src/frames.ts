@@ -1,9 +1,9 @@
 import { sha256 } from '@noble/hashes/sha2.js';
-import { GatewaySessionError, sessionRejection, requestFailure } from './errors.js';
+import { GatewaySessionError, GatewayStreamInterruptedError, sessionRejection, requestFailure } from './errors.js';
 
 export const PROTOCOL = 'axiom-gateway-v2';
 const MAX_FRAME = 1024 * 1024;
-const MAX_RESPONSE = 16 * 1024 * 1024;
+const MAX_RESPONSE = 64 * 1024 * 1024;
 const hex = (bytes: Uint8Array) => Array.from(bytes, v => v.toString(16).padStart(2, '0')).join('');
 
 export interface Frame {
@@ -29,9 +29,13 @@ export async function readFrames(
   let total = 0, sequence = 0;
   let terminal: Terminal | FailureTerminal | undefined;
   let rejected: GatewaySessionError | undefined;
+  let generationObserved = false;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await reader.read().catch(error => {
+        if (error instanceof TypeError) throw new GatewayStreamInterruptedError({ cause: error });
+        throw error;
+      });
       if (done) break;
       total += value.byteLength;
       if (total > MAX_RESPONSE) throw new Error('Gateway response exceeds limit');
@@ -58,6 +62,9 @@ export async function readFrames(
           terminal = data;
         } else {
           digest.update(line);
+          // Only known operational frames may precede a retry-safe rejection.
+          // Unknown future frames conservatively withhold replay permission.
+          if (!['accepted', 'upstream_proof'].includes(frame.kind)) generationObserved = true;
           onProvisional(frame);
         }
         start = end + 1;
@@ -65,10 +72,15 @@ export async function readFrames(
       pending = joined.slice(start);
       if (pending.length > MAX_FRAME) throw new Error('Gateway frame exceeds limit');
     }
-    if (pending.length) throw new Error('Gateway stream was interrupted');
+    if (pending.length) throw new GatewayStreamInterruptedError();
     if (rejected) throw rejected;
-    if (!terminal) throw new Error('Gateway stream was interrupted');
-    if (!terminal.success) throw requestFailure(terminal.result);
+    if (!terminal) throw new GatewayStreamInterruptedError();
+    if (!terminal.success) {
+      const result = terminal.result && typeof terminal.result === 'object'
+        ? { ...terminal.result, ...(generationObserved ? { pre_generation: false } : {}) }
+        : terminal.result;
+      throw requestFailure(result);
+    }
     return terminal;
   } catch (error) {
     await reader.cancel().catch(() => {});
