@@ -5,6 +5,7 @@ use aes_gcm::{
     aead::{Aead as _, KeyInit as _},
 };
 use anyhow::{Result, ensure};
+use axiom_web_gateway_core::inference::MAX_GENERATED_IMAGE_BYTES;
 #[cfg(test)]
 use hpke::kem::Kem as _;
 use hpke::{
@@ -15,6 +16,9 @@ use rand::{SeedableRng as _, rngs::StdRng};
 use zeroize::Zeroizing;
 
 type Kem = X25519HkdfSha256;
+const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+// Image chunks contain base64, plus bounded framing, progress and metadata.
+const MAX_IMAGE_RESPONSE_BYTES: usize = MAX_GENERATED_IMAGE_BYTES.div_ceil(3) * 4 + 1024 * 1024;
 
 pub struct Identity {
     private: <Kem as hpke::kem::Kem>::PrivateKey,
@@ -25,6 +29,7 @@ pub struct Reply {
     pub nonce_hex: String,
     sequence: u64,
     sent_bytes: usize,
+    maximum_bytes: usize,
 }
 
 impl Identity {
@@ -100,12 +105,21 @@ impl Identity {
                 nonce_hex: hex::encode(nonce),
                 sequence: 0,
                 sent_bytes: 0,
+                maximum_bytes: MAX_RESPONSE_BYTES,
             },
         ))
     }
 }
 
 impl Reply {
+    /// Selected only for an authorized image RPC, after request authentication.
+    pub fn with_image_limit(mut self, image: bool) -> Self {
+        if image {
+            self.maximum_bytes = MAX_IMAGE_RESPONSE_BYTES;
+        }
+        self
+    }
+
     pub fn frame(&mut self, payload: &serde_json::Value) -> Result<Vec<u8>> {
         let mut plaintext = Zeroizing::new(serde_json::to_vec(payload)?);
         plaintext.push(b'\n');
@@ -114,7 +128,7 @@ impl Reply {
             .checked_add(plaintext.len())
             .ok_or_else(|| anyhow::anyhow!("response limit"))?;
         ensure!(
-            self.sent_bytes <= 16 * 1024 * 1024
+            self.sent_bytes <= self.maximum_bytes
                 && plaintext.len() <= 1024 * 1024
                 && self.sequence < u64::MAX,
             "response limit"
@@ -261,6 +275,58 @@ mod tests {
         assert!(
             identity
                 .open(&hex::encode(enc.to_bytes()), &request)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn maximum_image_survives_encrypted_chunks_and_completion_with_bounded_overhead() {
+        let material = || ehbp::derive_response_keys(&[1; 32], &[2; 32], &[3; 32]).unwrap();
+        let reply = || Reply {
+            material: material(),
+            nonce_hex: hex::encode([3; 32]),
+            sequence: 0,
+            sent_bytes: 0,
+            maximum_bytes: MAX_RESPONSE_BYTES,
+        };
+        let mut ordinary = reply();
+        let mut image = reply().with_image_limit(true);
+        let receiver = material();
+        let cipher = Aes256Gcm::new_from_slice(&receiver.key).unwrap();
+        let length = MAX_GENERATED_IMAGE_BYTES.div_ceil(3) * 4;
+        let chunk = "A".repeat(256 * 1024);
+        let mut ordinary_rejected = false;
+        for offset in (0..length).step_by(chunk.len()) {
+            let frame = serde_json::json!({"kind":"image_chunk", "data":{
+                "offset":offset,"data":&chunk[..(length-offset).min(chunk.len())]
+            }});
+            if !ordinary_rejected {
+                ordinary_rejected = ordinary.frame(&frame).is_err();
+            }
+            let sequence = image.sequence;
+            let sealed = image.frame(&frame).unwrap();
+            let nonce = ehbp::compute_nonce(&receiver.nonce_base, sequence);
+            let plaintext = cipher
+                .decrypt(Nonce::from_slice(&nonce), &sealed[4..])
+                .unwrap();
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&plaintext).unwrap(),
+                frame
+            );
+        }
+        assert!(ordinary_rejected, "ordinary RPCs retain their 16 MiB limit");
+        image
+            .frame(&serde_json::json!({"kind":"terminal","success":true}))
+            .unwrap();
+        assert!(image.sent_bytes > MAX_RESPONSE_BYTES);
+        assert!(image.sent_bytes < MAX_IMAGE_RESPONSE_BYTES);
+        // A compromised provider cannot turn an image RPC into an unbounded stream.
+        while image.frame(&serde_json::json!({"data":chunk})).is_ok() {}
+        assert!(image.sent_bytes > MAX_IMAGE_RESPONSE_BYTES);
+        let mut image = reply().with_image_limit(true);
+        assert!(
+            image
+                .frame(&serde_json::json!({"data":"A".repeat(1024 * 1024)}))
                 .is_err()
         );
     }

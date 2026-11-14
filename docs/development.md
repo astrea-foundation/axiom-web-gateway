@@ -92,7 +92,10 @@ must advance together to the tested remotely published Desktop commit.
 The 2048² development image profile accepts 20 MiB image uploads/outputs and a
 128 MiB per-account upload pool so five full-size RGBA references fit. Ordinary
 files retain their 10 MiB bound. The SDK accepts the matching image area/byte
-bounds and a bounded 64 MiB reply stream. Shared inference dependencies must
+bounds and a bounded 64 MiB reply stream.
+The server separately bounds image responses to the base64 expansion of 20 MiB
+plus 1 MiB of framing, progress and metadata; other responses retain 16 MiB.
+Shared inference dependencies must
 advance together to the Desktop commit that contains the separate reference
 normalizer and larger signed image grants; coordinate with the worker and API
 rollout and the encrypted-file size migration before enabling 2K clients.
