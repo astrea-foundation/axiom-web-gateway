@@ -25,9 +25,9 @@ axiom-gateway-protocol = { path = "crates/axiom-gateway-protocol" }
 axiom-web-gateway-core = { path = "crates/axiom-web-gateway-core" }
 # One reviewed revision for the entire shared inference stack. Cargo discovers
 # these workspace crates inside the repository; no Git submodule is required.
-axiom-inference = { git = "https://github.com/astrea-foundation/axiom-desktop.git", rev = "8d596404f6140ae5db4b9d69990497b0a4f0ff92" }
-axiom-openai-compat = { git = "https://github.com/astrea-foundation/axiom-desktop.git", rev = "8d596404f6140ae5db4b9d69990497b0a4f0ff92" }
-axiom-secure-client = { git = "https://github.com/astrea-foundation/axiom-desktop.git", rev = "8d596404f6140ae5db4b9d69990497b0a4f0ff92", default-features = false }
+axiom-inference = { git = "https://github.com/astrea-foundation/axiom-desktop.git", rev = "84a2053b360a0982ed59f3022d1e16b9e71dfd96" }
+axiom-openai-compat = { git = "https://github.com/astrea-foundation/axiom-desktop.git", rev = "84a2053b360a0982ed59f3022d1e16b9e71dfd96" }
+axiom-secure-client = { git = "https://github.com/astrea-foundation/axiom-desktop.git", rev = "84a2053b360a0982ed59f3022d1e16b9e71dfd96", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
