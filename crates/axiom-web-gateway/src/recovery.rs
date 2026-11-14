@@ -189,6 +189,6 @@ mod tests {
             .await
             .unwrap();
         assert!(log.frame(0).await.is_err());
-        assert!(log.frames.lock().await.values.is_empty());
+        assert_eq!(log.frames.lock().await.values, Vec::new());
     }
 }
