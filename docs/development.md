@@ -100,6 +100,11 @@ completion are unchanged. Deploy the compatible platform relay first, then
 qualify a new measured gateway build before browser rollout. Updating this source
 pin alone does not change a running enclave or the browser's history planner.
 
+The shared client also accepts authenticated AstreaAI image-progress frames. The
+ordinary image API drains updates when its caller has no progress consumer, so
+workers that report progress remain compatible with gateway image requests.
+Progress never replaces request binding or authenticated stream completion.
+
 The 2048² development image profile accepts 20 MiB image uploads/outputs and a
 128 MiB per-account upload pool so five full-size RGBA references fit. Ordinary
 files retain their 10 MiB bound. The SDK accepts the matching image area/byte
