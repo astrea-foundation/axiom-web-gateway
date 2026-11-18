@@ -42,6 +42,9 @@ export class GatewayRequestError extends Error {
   constructor(readonly code: string, readonly stage?: string, readonly retryAt?: number, readonly preGeneration = false) {
     super(code === 'RATE_LIMITED' ? 'The provider is busy. Try again shortly.'
       : code === 'INSUFFICIENT_CREDIT' ? 'Insufficient balance. Top up your Axiom balance to continue.'
+      : code === 'TRIAL_CAPACITY' ? (retryAt && Number.isFinite(new Date(retryAt * 1000).getTime())
+        ? `Free trials are currently at capacity. Check back at ${new Date(retryAt * 1000).toLocaleString()}.`
+        : 'Free trials are currently at capacity. Please try again later.')
       : code === 'PROVIDER_DISCONNECTED' || code === 'STREAM_INTERRUPTED' ? 'The connection was interrupted and the reply couldn’t finish. Your conversation is saved.'
       : code === 'STREAM_TIMEOUT' ? 'The model stopped responding. Your conversation is saved.'
       : stage ? `Gateway request failed during ${stage} (${code})` : 'Gateway completion failed');

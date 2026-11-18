@@ -1,6 +1,6 @@
 import { Identity } from 'ehbp';
 import { GatewayTransport } from './transport.js';
-import { verifyGateway } from './verifier.js';
+import { prepareGatewayVerifier, verifyGateway } from './verifier.js';
 import { SignJWT } from 'jose';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { PROTOCOL, readFrames, type Frame } from './frames.js';
@@ -68,9 +68,11 @@ async function attest(options: GatewayOptions, signal?: AbortSignal, minimumSequ
     const [evidence, policy] = await Promise.all([
       fetch(options.gatewayOrigin + '/v1/attestation', { ...common, method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ challenge }) }).then(r => boundedJson(r, 8 * 1024 * 1024)),
       fetch(options.backendOrigin + '/api/v1/web-gateway/trust-policy', common).then(r => boundedJson(r, 128 * 1024)),
+      prepareGatewayVerifier(options.verifierWasm),
     ]);
     // Current policy comes from the relying application's backend, not the attester.
     evidence.policy = policy;
+    deadline.throwIfAborted();
     const proof = JSON.parse(await verifyGateway(evidence, {
       challenge, origin: options.gatewayOrigin, publisher_key: options.publisherKey,
       now: now(), minimum_policy_sequence: minimumSequence,
