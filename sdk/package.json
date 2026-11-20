@@ -1,6 +1,6 @@
 {
   "name": "@axiom/web-gateway",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "private": true,
   "type": "module",
   "files": ["dist", "wasm"],

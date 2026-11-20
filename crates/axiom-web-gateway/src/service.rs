@@ -114,6 +114,8 @@ enum Operation {
         references: Vec<crate::uploads::ImageReference>,
         dimensions: Option<ImageDimensions>,
         aspect_ratio: Option<String>,
+        #[serde(default)]
+        image_queue: bool,
     },
     Infer {
         request: Box<ChatCompletionRequest>,
@@ -135,6 +137,23 @@ enum Operation {
     Cancel {
         target_request_id: String,
     },
+}
+
+impl Operation {
+    fn timeout(&self) -> Duration {
+        if matches!(
+            self,
+            Self::Image {
+                image_queue: true,
+                ..
+            }
+        ) {
+            // The queue, generation grant and verified image delivery each need time.
+            Duration::from_secs(840)
+        } else {
+            Duration::from_secs(600)
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -448,7 +467,7 @@ async fn session(
         let mut uploads = state.uploads.lock().await;
         admit_session(&mut sessions, &mut uploads, candidate, state.config.max_sessions, now())?;
         Ok::<_, anyhow::Error>(json!({"protocol":PROTOCOL,"session_id":id,"expires_at":expires_at,
-            "stream_recovery":1,"session_lifecycle":{"version":1,"heartbeat_interval_seconds":HEARTBEAT_SECONDS,"idle_timeout_seconds":IDLE_SECONDS}}))
+            "image_queue":1,"stream_recovery":1,"session_lifecycle":{"version":1,"heartbeat_interval_seconds":HEARTBEAT_SECONDS,"idle_timeout_seconds":IDLE_SECONDS}}))
     }
     .await;
     let payload = match result {
@@ -590,7 +609,7 @@ async fn rpc(
             sequence: 0,
         };
         let work = tokio::time::timeout(
-            Duration::from_secs(600),
+            payload.operation.timeout(),
             execute(&state, &session, payload, &cancellation, owner, &mut output),
         );
         let result = if let Some(log) = producer_replay {
@@ -858,6 +877,7 @@ async fn execute(
             references,
             dimensions,
             aspect_ratio,
+            image_queue,
         } => {
             ensure!(
                 !prompt.trim().is_empty() && prompt.len() <= 8192,
@@ -900,12 +920,20 @@ async fn execute(
             } else {
                 dimensions
             };
+            let sources = references
+                .images
+                .iter()
+                .map(|(id, image)| (id.as_str(), image))
+                .collect::<Vec<_>>();
             image_operation(
                 session,
-                &model,
-                &prompt,
-                &references,
-                dimensions,
+                ImageGenerationRequest {
+                    chat_model_id: &model,
+                    prompt: &prompt,
+                    references: &sources,
+                    dimensions,
+                    allow_long_queue: image_queue,
+                },
                 cancellation,
                 output,
             )
@@ -1034,33 +1062,25 @@ async fn admit_execution(
 
 async fn image_operation(
     session: &Session,
-    model: &str,
-    prompt: &str,
-    references: &crate::uploads::ImageReferences,
-    dimensions: Option<ImageDimensions>,
+    request: ImageGenerationRequest<'_>,
     cancellation: &CancellationToken,
     output: &mut Output,
 ) -> Result<Value> {
-    let sources = references
-        .images
-        .iter()
-        .map(|(id, image)| (id.as_str(), image))
-        .collect::<Vec<_>>();
+    let allow_long_queue = request.allow_long_queue;
     let (sender, mut receiver) = mpsc::channel(16);
-    let future = session.client.image_request_with_progress(
-        ImageGenerationRequest {
-            chat_model_id: model,
-            prompt,
-            references: &sources,
-            dimensions,
-        },
-        sender,
-        cancellation.clone(),
-    );
+    let future = session
+        .client
+        .image_request_with_progress(request, sender, cancellation.clone());
     tokio::pin!(future);
     let mut image = loop {
         tokio::select! {
-            () = cancellation.cancelled() => anyhow::bail!("image request cancelled"),
+            () = cancellation.cancelled() => {
+                if allow_long_queue {
+                    // Let the client release its controller position on cancellation.
+                    let _ = tokio::time::timeout(Duration::from_secs(5), &mut future).await;
+                }
+                anyhow::bail!("image request cancelled");
+            }
             result = &mut future => break result.context(RequestPhase::UpstreamExchange)?,
             Some(progress) = receiver.recv() => output.send("image_progress", serde_json::to_value(progress)?).await?,
         }
@@ -1208,6 +1228,32 @@ async fn forward(event: ProviderEvent, output: &mut Output, verified: &mut bool)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_queue_requires_an_explicit_rpc_opt_in() {
+        let mut payload = json!({"op": "image", "model": "fixture", "prompt": "A quiet lake"});
+        let legacy: Operation = serde_json::from_value(payload.clone()).unwrap();
+        assert!(matches!(
+            legacy,
+            Operation::Image {
+                image_queue: false,
+                ..
+            }
+        ));
+        assert_eq!(legacy.timeout(), Duration::from_secs(600));
+        payload["image_queue"] = json!(true);
+        let queued: Operation = serde_json::from_value(payload.clone()).unwrap();
+        assert!(matches!(
+            queued,
+            Operation::Image {
+                image_queue: true,
+                ..
+            }
+        ));
+        assert_eq!(queued.timeout(), Duration::from_secs(840));
+        payload["image_queue"] = json!("true");
+        assert!(serde_json::from_value::<Operation>(payload).is_err());
+    }
 
     fn fixture_session(id: u8, account: &str, current: u64) -> Arc<Session> {
         Arc::new(Session {
