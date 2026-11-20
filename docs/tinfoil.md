@@ -77,13 +77,12 @@ The shim forwards only readiness, evidence, session and RPC paths and configured
 browser origins. The Rust listener is opened only after self-verification and
 backend admission, not merely when the container starts.
 
-The selected production configuration for `v0.1.12` binds the immutable runtime
-image `sha256:b57d1d3815364097992413dbdd6b62d810eb28e57c4380155ffd958c41b2a48b` built from promoted source
-`b86991a578b5022e44c87590c4473fd3f6e42a90`. It includes the shared client updates for bounded
-single-copy NEAR ciphertext relay and compatibility with authenticated AstreaAI
-image-progress frames. The browser protocol remains compatible with SDK 0.2.7;
-request binding, strict TEE verification and authenticated stream completion remain
-required. The matching verifier image and clean build record are retained with
+The production configuration for `v0.1.13` selects the immutable runtime
+image `sha256:19f7f4085ae44c40897a09da6c265364ad569f5bab9cd1136415ab77687fc4aa` built from promoted source
+`d4eea15dd75e34ecea838e1352c13bfc5ed3fec4`. The gateway supports the ten-minute image queue
+for updated SDKs and continues to accept the existing image request format.
+Request binding, strict TEE verification, and authenticated stream completion
+remain required. Retain the matching verifier image and clean build record with
 the release.
 
 ## Release and staged startup
