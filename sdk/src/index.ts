@@ -83,6 +83,10 @@ async function attest(options: GatewayOptions, signal?: AbortSignal, minimumSequ
   return proof;
 }
 
+const RPC_TIMEOUT_MS = 610_000;
+const IMAGE_QUEUE_TIMEOUT_MS = 850_000;
+const MIN_IMAGE_QUEUE_SESSION_SECONDS = 830;
+
 export class GatewayClient {
   readonly proof: VerifiedGateway;
   private readonly proofRefresh: ProofRefresh;
@@ -94,6 +98,7 @@ export class GatewayClient {
     private readonly expires: number,
     lifecycleSupported: boolean,
     private readonly resumable = false,
+    private readonly longImageQueue = false,
   ) {
     this.proof = proof;
     this.proofRefresh = new ProofRefresh(proof, (minimum, signal) => attest(options, signal, minimum));
@@ -105,6 +110,20 @@ export class GatewayClient {
   get available(): boolean { return this.lifecycle.available; }
   retain(): () => void { return this.lifecycle.retain(); }
   close(): Promise<void> { return this.lifecycle.close(); }
+  async imageSession(signal?: AbortSignal): Promise<GatewayClient> {
+    if (this.longImageQueue && !this.canWaitForImage()) {
+      return GatewayClient.connect({
+        ...this.options,
+        minimumPolicySequence: Math.max(this.options.minimumPolicySequence ?? 0, this.proof.policy_sequence),
+      }, signal);
+    }
+    return this;
+  }
+
+  private canWaitForImage(): boolean {
+    return this.longImageQueue && this.expires > now() + MIN_IMAGE_QUEUE_SESSION_SECONDS;
+  }
+
   async verify(signal?: AbortSignal): Promise<VerifiedGateway> {
     if (!this.available) throw new GatewaySessionError('session_expired');
     await this.proofRefresh.refresh(signal);
@@ -146,7 +165,8 @@ export class GatewayClient {
       const expires = delegationDeadline(value.data.expires_at, now(), 900);
       const lifecycle = value.data.session_lifecycle;
       if (lifecycle !== undefined && (lifecycle.version !== 1 || lifecycle.heartbeat_interval_seconds !== 60 || lifecycle.idle_timeout_seconds !== 180)) throw new GatewaySessionError('session_rejected');
-      return new GatewayClient(options, proof, transport, keys.privateKey, publicKey, value.data.session_id, expires, lifecycle !== undefined, value.data.stream_recovery === 1);
+      return new GatewayClient(options, proof, transport, keys.privateKey, publicKey, value.data.session_id, expires,
+        lifecycle !== undefined, value.data.stream_recovery === 1, value.data.image_queue === 1);
     } catch (error) {
       if (error instanceof GatewaySessionError) throw error;
       throw new GatewaySessionError('session_rejected', { cause: error });
@@ -190,7 +210,9 @@ export class GatewayClient {
     const leave = this.lifecycle.enter();
     try {
       const requestId = options.requestId ?? random(16);
-      const signal = AbortSignal.any([AbortSignal.timeout(610_000), ...(options.signal ? [options.signal] : [])]);
+      const imageQueue = operation.op === 'image' && this.canWaitForImage();
+      const timeout = imageQueue ? IMAGE_QUEUE_TIMEOUT_MS : RPC_TIMEOUT_MS;
+      const signal = AbortSignal.any([AbortSignal.timeout(timeout), ...(options.signal ? [options.signal] : [])]);
       let seen = -1;
       const acceptedDigest = sha256.create();
       // Every replay is authenticated and hashed from sequence zero. Only
@@ -215,7 +237,7 @@ export class GatewayClient {
         };
         try {
           const result = await this.requestRpc(attempt === 0 ? operation : { op: 'resume', target_request_id: requestId }, deliver,
-            { signal, requestId: attempt === 0 ? requestId : random(16), ...(attempt ? { responseRequestId: requestId } : {}) });
+            { signal, imageQueue, requestId: attempt === 0 ? requestId : random(16), ...(attempt ? { responseRequestId: requestId } : {}) });
           if (!prefixMatched) throw new Error('Gateway replay omitted accepted frames');
           return result;
         } catch (error) {
@@ -230,7 +252,7 @@ export class GatewayClient {
   }
 
   private async requestRpc(operation: Parameters<GatewayClient['rpc']>[0] | { op: 'heartbeat' | 'session_close' } | { op: 'resume'; target_request_id: string },
-    onProvisional: (frame: Frame) => void, options: { signal?: AbortSignal; requestId?: string; responseRequestId?: string }): Promise<unknown> {
+    onProvisional: (frame: Frame) => void, options: { signal?: AbortSignal; requestId?: string; responseRequestId?: string; imageQueue?: boolean }): Promise<unknown> {
     const started = Date.now();
     if (this.expires <= now() || this.proof.policy_expires_at <= now()) throw new GatewaySessionError('session_expired');
     if (this.proof.evidence_expires_at <= now() + 30) {
@@ -240,10 +262,11 @@ export class GatewayClient {
     if (this.expires <= now() || this.proof.policy_expires_at <= now() || this.proof.evidence_expires_at <= now()) throw new GatewaySessionError('session_expired');
     const requestId = options.requestId ?? random(16);
     if (!/^[0-9a-f]{32}$/.test(requestId)) throw new Error('Invalid request identity');
-    const payload = JSON.stringify({ request_id: requestId, ...operation });
+    const payload = JSON.stringify({ request_id: requestId, ...operation, ...(options.imageQueue ? { image_queue: true } : {}) });
     if (encoder.encode(payload).length > 3 * 1024 * 1024) throw new Error('Gateway request exceeds limit');
     const proof = await GatewayClient.authorize(this.key, this.publicKey, this.session, this.options.gatewayOrigin + '/v1/rpc', this.proof.encryption_key, payload);
-    const signal = AbortSignal.any([AbortSignal.timeout(610_000), ...(options.signal ? [options.signal] : [])]);
+    const timeout = options.imageQueue ? IMAGE_QUEUE_TIMEOUT_MS : RPC_TIMEOUT_MS;
+    const signal = AbortSignal.any([AbortSignal.timeout(timeout), ...(options.signal ? [options.signal] : [])]);
     signal.throwIfAborted();
     try {
       const response = await this.transport.request(this.options.gatewayOrigin + '/v1/rpc', {

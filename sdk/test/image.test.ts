@@ -11,7 +11,7 @@ const digest=createHash('sha256').update(Buffer.from(data,'base64')).digest('hex
 const request='a'.repeat(32);
 function fixture(change: (result: any)=>void=()=>{}, offset=0) {
   const calls: string[]=[];
-  const client={retain:()=>()=>{},upload:async()=>{calls.push('upload');return String(calls.length);},rpc:async(payload:any,frame?:(value:Frame)=>void,options?:{requestId?:string})=>{
+  const client={imageSession:async()=>client,retain:()=>()=>{},upload:async()=>{calls.push('upload');return String(calls.length);},rpc:async(payload:any,frame?:(value:Frame)=>void,options?:{requestId?:string})=>{
     calls.push(payload.op);if(payload.op!=='image') return {};
     frame?.({protocol:'axiom-gateway-v2',request_id:options!.requestId!,sequence:0,kind:'image_chunk',data:{offset,data}});
     // Exact GeneratedImage serde field names, including RequestUsage's binding.
@@ -40,7 +40,7 @@ test('the complete 20 MiB output contract survives chunking, while a decoded byt
   for (const size of [20*1024*1024,20*1024*1024+1]) {
     const raw=Buffer.alloc(size,42),encoded=raw.toString('base64');
     const hash=createHash('sha256').update(raw).digest('hex');
-    const client={retain:()=>()=>{},rpc:async(payload:any,frame?:(value:Frame)=>void,options?:{requestId?:string})=>{
+    const client={imageSession:async()=>client,retain:()=>()=>{},rpc:async(payload:any,frame?:(value:Frame)=>void,options?:{requestId?:string})=>{
       if(payload.op!=='image')return {};
       for(let offset=0;offset<encoded.length;offset+=256*1024) frame?.({protocol:'axiom-gateway-v2',request_id:options!.requestId!,sequence:offset,kind:'image_chunk',data:{offset,data:encoded.slice(offset,offset+256*1024)}});
       return {upstream_response_verified:true,image_data_length:encoded.length,image:{requestId:request,mimeType:'image/png',width:1536,height:1536,sha256:hash,sourceImageIds:[],evidence:{state:'verified'},usage:{requestId:request,responseVerified:true,settled:true}}};
@@ -52,7 +52,7 @@ test('the complete 20 MiB output contract survives chunking, while a decoded byt
 test('provisional image chunks are withheld until the RPC authenticates completion',async()=>{
   const original=fixture().client;let finish!:()=>void;let received!:()=>void;let returned=false;
   const ready=new Promise<void>(r=>{received=r;}),gate=new Promise<void>(r=>{finish=r;});
-  const client={retain:()=>()=>{},rpc:async(...args:Parameters<GatewayClient['rpc']>)=>{const value=await original.rpc(...args);received();await gate;return value;}} as unknown as GatewayClient;
+  const client={imageSession:async()=>client,retain:()=>()=>{},rpc:async(...args:Parameters<GatewayClient['rpc']>)=>{const value=await original.rpc(...args);received();await gate;return value;}} as unknown as GatewayClient;
   const result=requestImage(client,{model:'model',prompt:'synthetic'}).then(value=>{returned=true;return value;});
   await ready;assert.equal(returned,false);finish();assert.equal((await result).sha256,digest);
 });
