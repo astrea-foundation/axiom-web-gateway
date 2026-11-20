@@ -1,11 +1,27 @@
 let worker: Worker | undefined;
+let preparation: Promise<void> | undefined;
 let serial = 0;
 const pending = new Map<number, { resolve(value: string): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
+
+/** Start loading the packaged verifier while the proof and policy are fetched. */
+export async function prepareGatewayVerifier(bytes?: BufferSource): Promise<void> {
+  if (typeof Worker === 'undefined') return (await import('./verifier-runtime.js')).initialize(bytes);
+  preparation ??= workerCall(undefined, bytes).then(() => {}, error => {
+    preparation = undefined;
+    throw error;
+  });
+  return preparation;
+}
+
 /** Verify off the UI thread. Node tests use the identical packaged WASM directly. */
 export async function verifyGateway(evidence: unknown, context: unknown, bytes?: BufferSource): Promise<string> {
   const input = JSON.stringify({ evidence, context });
   if (new TextEncoder().encode(input).length > 8 * 1024 * 1024) throw new Error('gateway attestation failed');
   if (typeof Worker === 'undefined') return (await import('./verifier-runtime.js')).verifyLocally(input, bytes);
+  return workerCall(input, bytes);
+}
+
+function workerCall(input?: string, bytes?: BufferSource): Promise<string> {
   if (!worker) {
     worker = new Worker(new URL('./verifier-worker.js', import.meta.url), { type: 'module' });
     worker.onmessage = ({ data }) => {
@@ -16,7 +32,7 @@ export async function verifyGateway(evidence: unknown, context: unknown, bytes?:
     };
     worker.onerror = () => {
       for (const call of pending.values()) { clearTimeout(call.timer); call.reject(new Error('Gateway verifier unavailable')); }
-      pending.clear(); worker?.terminate(); worker = undefined;
+      pending.clear(); worker?.terminate(); worker = undefined; preparation = undefined;
     };
   }
   const id = ++serial;

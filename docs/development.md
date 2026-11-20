@@ -26,8 +26,10 @@ inject hardware facts only into an unexported test helper. Production verifiers
 always use the official embedded trust roots and never conformance trust overrides.
 
 `pnpm build` creates `out/axiom-gateway-verify`, the packaged WASM and its matching
-Go runtime, then SDK ESM/types. Browser verification runs in a module worker to
-avoid blocking chat rendering. Bundle the worker, `sdk/wasm` and SDK together;
+Go runtime, then SDK ESM/types. The browser starts the module worker and its
+verifier alongside the evidence and trust-policy reads. Verification runs off
+the UI thread and must finish before session admission. Bundle the worker,
+`sdk/wasm` and SDK together;
 serve WASM compressed and cache immutable assets. The uncompressed module is
 about 36 MiB; this is a material initial-download cost, not a prompt transfer.
 Extensions may supply packaged WASM bytes and need normal module-worker/WASM CSP

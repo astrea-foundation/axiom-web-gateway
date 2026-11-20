@@ -13,6 +13,31 @@ const failure = (prefix = '', value: unknown = rejection) => prefix + line(prefi
 });
 const stream = (text: string) => new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new TextEncoder().encode(text)); controller.close(); } });
 
+test('image queue opt-in requires verified gateway support and a fresh delegation', async () => {
+  const key = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']);
+  const publicKey = await crypto.subtle.exportKey('jwk', key.publicKey);
+  const now = Math.floor(Date.now() / 1000);
+  const body = line(0, 'terminal', {
+    success: true, transcript_sha256: createHash('sha256').digest('hex'), result: {},
+  });
+  for (const [longImageQueue, lifetime, expected] of [
+    [false, 900, undefined], [true, 700, undefined], [true, 900, true],
+  ] as const) {
+    const client = Object.assign(Object.create(GatewayClient.prototype), {
+      options: { gatewayOrigin: 'https://gateway.invalid' },
+      proof: { policy_expires_at: now + 1000, evidence_expires_at: now + 600, encryption_key: 'a'.repeat(64) },
+      expires: now + lifetime, session: 'fixture', key: key.privateKey, publicKey, longImageQueue,
+      lifecycle: { enter: () => () => {}, acknowledge: () => {} },
+      transport: { request: async (_url: string, init: RequestInit) => {
+        const request = JSON.parse(JSON.parse(String(init.body)).payload);
+        assert.equal(request.image_queue, expected);
+        return new Response(body, { headers: { 'ehbp-response-nonce': 'a'.repeat(64) } });
+      } },
+    }) as GatewayClient;
+    await client.rpc({ op: 'image', model: 'fixture', prompt: 'A quiet lake' }, () => {}, { requestId: id });
+  }
+});
+
 test('only exact bounded context rejection metadata grants pre-generation recovery', () => {
   assert.equal(requestFailure(rejection).preGeneration, true);
   assert.equal(requestFailure({ ...rejection, stage: 'request_validation' }).preGeneration, true);

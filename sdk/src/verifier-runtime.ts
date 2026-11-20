@@ -17,7 +17,10 @@ export function initialize(bytes?: BufferSource): Promise<void> {
     const { instance } = await WebAssembly.instantiate(source, go.importObject);
     void go.run(instance).catch(() => { globalThis.axiomVerifyGatewayV2 = undefined; });
     if (!globalThis.axiomVerifyGatewayV2) throw new Error('Gateway verifier unavailable');
-  })();
+  })().catch(error => {
+    ready = undefined;
+    throw error;
+  });
 }
 export async function verifyLocally(input: string, bytes?: BufferSource): Promise<string> {
   await initialize(bytes);

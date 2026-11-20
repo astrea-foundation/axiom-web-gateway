@@ -24,17 +24,19 @@ export async function requestImage(client: GatewayClient, options: Options, prog
       new Set(references.map(r=>r.id)).size !== references.length || references.some(r=>!r.id || r.id.length>128 || /[\u0000-\u001f\u007f]/.test(r.id)) ||
       options.dimensions && options.aspectRatio) throw new Error('Provide a prompt and at most five ordered reference images');
   const requestId = crypto.randomUUID().replaceAll('-','');
-  const release = client.retain();
+  const imageSession = await client.imageSession(signal);
+  let release: (() => void) | undefined;
   let started = false;
   try {
+    release = imageSession.retain();
     const bindings: Array<{ id: string; upload_id: string }> = [];
     for (const [i, reference] of references.entries()) {
-      const upload = await client.upload({ bytes:reference.bytes, targetRequestId:requestId, model:options.model, kind:'image', name:reference.name ?? `reference-${i+1}.png`, mimeType:reference.mimeType }, signal);
+      const upload = await imageSession.upload({ bytes:reference.bytes, targetRequestId:requestId, model:options.model, kind:'image', name:reference.name ?? `reference-${i+1}.png`, mimeType:reference.mimeType }, signal);
       bindings.push({ id:reference.id, upload_id:upload });
     }
     const chunks: string[] = []; let length = 0; let previous: ImageProgress | undefined;
     started = true;
-    const value = await client.rpc({ op:'image', model:options.model, prompt:options.prompt, references:bindings,
+    const value = await imageSession.rpc({ op:'image', model:options.model, prompt:options.prompt, references:bindings,
       ...(options.dimensions ? { dimensions:options.dimensions } : {}), ...(options.aspectRatio ? { aspect_ratio:options.aspectRatio } : {}) }, frame=>{
       if (frame.kind === 'image_chunk') {
         const chunk = frame.data as { offset?: unknown; data?: unknown };
@@ -67,8 +69,11 @@ export async function requestImage(client: GatewayClient, options: Options, prog
     } finally { bytes.fill(0); }
     return { ...image, source_image_ids:image.source_image_ids ?? [], data };
   } catch(error) {
-    if (started) await client.rpc({ op:'cancel', target_request_id:requestId },()=>{}, { signal:AbortSignal.timeout(5000) }).catch(()=>{});
-    await client.rpc({ op:'upload_abort', target_request_id:requestId },()=>{}, { signal:AbortSignal.timeout(5000) }).catch(()=>{});
+    if (started) await imageSession.rpc({ op:'cancel', target_request_id:requestId },()=>{}, { signal:AbortSignal.timeout(5000) }).catch(()=>{});
+    if (release) await imageSession.rpc({ op:'upload_abort', target_request_id:requestId },()=>{}, { signal:AbortSignal.timeout(5000) }).catch(()=>{});
     throw error;
-  } finally { release(); }
+  } finally {
+    release?.();
+    if (imageSession !== client) void imageSession.close().catch(() => {});
+  }
 }
