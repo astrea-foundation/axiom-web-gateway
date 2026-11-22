@@ -1,28 +1,23 @@
+mod attestation;
 mod wire;
 
 use anyhow::{Context, Result, ensure};
 use axiom_web_gateway_core::inference::{
     ImageDimensions, ImageGenerationRequest, InvocationState, RequestUsage, UsageCompleteness,
 };
-use axiom_web_gateway_core::secure_client::{
-    EvidenceClaim, GeneratedImage, SecurityEvidence, SecurityState,
-};
+use axiom_web_gateway_core::secure_client::{GeneratedImage, SecurityEvidence};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use image::{ImageEncoder as _, ImageFormat, ImageReader};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
-use std::{io::Cursor, path::PathBuf, process::Stdio, time::Duration};
-use tokio::{
-    io::{AsyncReadExt as _, AsyncWriteExt as _},
-    sync::{Semaphore, SemaphorePermit},
-};
+use std::{io::Cursor, path::PathBuf, time::Duration};
+use tokio::sync::{Semaphore, SemaphorePermit};
 use zeroize::Zeroizing;
 
 const CHUTES_ORIGIN: &str = "https://api.chutes.ai";
-const CHUTE_ID: &str = "c5cbd4df-7460-502b-a9f1-01071c670692";
+pub const CHUTE_ID: &str = "c5cbd4df-7460-502b-a9f1-01071c670692";
 const MODEL_ID: &str = "chutes:qwen-image-2512";
 const MAX_EVIDENCE: usize = 8 * 1024 * 1024;
-const MAX_MANIFEST: usize = 64 * 1024;
 const INVOCATION_TIMEOUT: u64 = 120;
 const REQUIRED_PROOF_SECONDS: u64 = INVOCATION_TIMEOUT + 20;
 
@@ -30,15 +25,11 @@ const REQUIRED_PROOF_SECONDS: u64 = INVOCATION_TIMEOUT + 20;
 #[serde(deny_unknown_fields)]
 pub struct Config {
     api_key_file: PathBuf,
-    verifier: PathBuf,
-    verifier_sha256: String,
-    workload_sha256: String,
 }
 
 pub struct Client {
     http: reqwest::Client,
     api_key: Zeroizing<String>,
-    config: Config,
     // One concurrent overflow attempt in the initial pilot, including preflight.
     slot: Semaphore,
 }
@@ -56,56 +47,14 @@ struct DiscoveredWorker {
     nonces: Vec<String>,
 }
 
-#[derive(Serialize)]
-struct Verification<'a> {
-    protocol: &'static str,
-    nonce: &'a str,
-    chute_id: &'static str,
-    instance_id: &'a str,
-    e2e_pubkey: &'a str,
-    workload_sha256: &'a str,
-    evidence: &'a str,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Verified {
-    nonce: String,
-    chute_id: String,
-    instance_id: String,
-    e2e_pubkey: String,
-    expires_at: u64,
-    workload_manifest: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WorkloadManifest<'a> {
-    chute_id: &'a str,
-    source_uri: &'a str,
-    source_sha256: &'a str,
-    container_digest: &'a str,
-    model: &'a str,
-    model_revision: &'a str,
-    weights_manifest_sha256: &'a str,
-}
-
 pub struct Prepared<'a> {
     _slot: SemaphorePermit<'a>,
     instance: String,
     invocation_nonce: String,
     invoke_by: u64,
     pub wire_sha256: String,
-    pub workload_sha256: &'a str,
     proof: SecurityEvidence,
     sealed: wire::SealedImage,
-}
-
-fn lowercase_hex(value: &str, len: usize) -> bool {
-    value.len() == len
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 fn supports_dimensions(size: ImageDimensions) -> bool {
@@ -165,20 +114,10 @@ pub fn verified_image(
 }
 
 impl Client {
-    pub fn new(config: Config) -> Result<Self> {
+    pub fn new(config: &Config) -> Result<Self> {
         ensure!(
-            config.api_key_file.is_absolute()
-                && config.verifier.is_absolute()
-                && config.verifier.is_file()
-                && lowercase_hex(&config.verifier_sha256, 64)
-                && lowercase_hex(&config.workload_sha256, 64)
-                && config.api_key_file.metadata()?.len() <= 4096
-                && config.verifier.metadata()?.len() <= 128 * 1024 * 1024,
+            config.api_key_file.is_absolute() && config.api_key_file.metadata()?.len() <= 4096,
             "invalid Chutes image configuration",
-        );
-        ensure!(
-            hex::encode(Sha256::digest(std::fs::read(&config.verifier)?)) == config.verifier_sha256,
-            "Chutes workload verifier digest differs",
         );
         let key = Zeroizing::new(std::fs::read_to_string(&config.api_key_file)?);
         let key = key.trim();
@@ -198,7 +137,6 @@ impl Client {
                 .timeout(Duration::from_secs(10))
                 .build()?,
             api_key: Zeroizing::new(key.to_owned()),
-            config,
             slot: Semaphore::new(1),
         })
     }
@@ -247,32 +185,28 @@ impl Client {
                 MAX_EVIDENCE,
             )
             .await?;
-        let verification = Verification {
-            protocol: "axiom-chutes-image-verification-v1",
-            nonce: &nonce,
-            chute_id: CHUTE_ID,
-            instance_id: &instance.instance_id,
-            e2e_pubkey: &instance.e2e_pubkey,
-            workload_sha256: &self.config.workload_sha256,
-            evidence: std::str::from_utf8(&evidence)?,
-        };
-        let verified = self.verify(&verification).await?;
-        let proof = verified.proof(&verification, crate::now())?;
+        let proof = tokio::time::timeout(
+            Duration::from_secs(30),
+            attestation::verify(&self.http, &instance, &nonce, &evidence),
+        )
+        .await??;
+        let proof_expires = proof
+            .hard_expires_at_unix_seconds
+            .context("missing Chutes proof expiry")?;
         let invoke_by = discovery
             .nonce_expires_at
-            .min(verified.expires_at - REQUIRED_PROOF_SECONDS);
+            .min(proof_expires.saturating_sub(REQUIRED_PROOF_SECONDS));
         ensure!(
             invoke_by > crate::now() + 10,
             "Chutes invocation nonce expired"
         );
-        let sealed = wire::seal(&verified.e2e_pubkey, prompt, size.width, size.height)?;
+        let sealed = wire::seal(&instance.e2e_pubkey, prompt, size.width, size.height)?;
         Ok(Prepared {
             _slot: slot,
             instance: instance.instance_id,
             invocation_nonce,
             invoke_by,
             wire_sha256: hex::encode(Sha256::digest(&sealed.body)),
-            workload_sha256: &self.config.workload_sha256,
             proof,
             sealed,
         })
@@ -288,39 +222,6 @@ impl Client {
             limit,
         )
         .await
-    }
-
-    async fn verify(&self, verification: &Verification<'_>) -> Result<Verified> {
-        let raw = serde_json::to_vec(verification)?;
-        tokio::time::timeout(Duration::from_secs(15), async {
-            let mut child = tokio::process::Command::new(&self.config.verifier)
-                .env_clear()
-                .kill_on_drop(true)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()?;
-            let mut stdin = child
-                .stdin
-                .take()
-                .context("missing Chutes verifier input")?;
-            let stdout = child
-                .stdout
-                .take()
-                .context("missing Chutes verifier output")?;
-            let mut stdout = stdout.take(128 * 1024 + 1);
-            let mut out = Vec::new();
-            tokio::try_join!(
-                async move { stdin.write_all(&raw).await },
-                stdout.read_to_end(&mut out),
-            )?;
-            ensure!(
-                out.len() <= 128 * 1024 && child.wait().await?.success(),
-                "Chutes workload verification rejected"
-            );
-            serde_json::from_slice(&out).context("invalid Chutes verification result")
-        })
-        .await?
     }
 
     pub async fn invoke(
@@ -364,62 +265,6 @@ impl Client {
             "Chutes worker proof expired"
         );
         Ok((png, proof))
-    }
-}
-
-impl Verified {
-    fn proof(&self, request: &Verification<'_>, now: u64) -> Result<SecurityEvidence> {
-        ensure!(
-            self.nonce == request.nonce
-                && self.chute_id == request.chute_id
-                && self.instance_id == request.instance_id
-                && self.e2e_pubkey == request.e2e_pubkey
-                && self.expires_at > now + REQUIRED_PROOF_SECONDS
-                && self.expires_at <= now + 600
-                && self.workload_manifest.len() <= MAX_MANIFEST
-                && hex::encode(Sha256::digest(self.workload_manifest.as_bytes()))
-                    == request.workload_sha256,
-            "Chutes workload, key or freshness differs",
-        );
-        let manifest: WorkloadManifest<'_> = serde_json::from_str(&self.workload_manifest)?;
-        ensure!(
-            manifest.chute_id == CHUTE_ID
-                && manifest.model == "Qwen/Qwen-Image-2512"
-                && lowercase_hex(manifest.model_revision, 40)
-                && lowercase_hex(manifest.source_sha256, 64)
-                && lowercase_hex(manifest.weights_manifest_sha256, 64)
-                && manifest
-                    .container_digest
-                    .strip_prefix("sha256:")
-                    .is_some_and(|digest| lowercase_hex(digest, 64))
-                && url::Url::parse(manifest.source_uri).is_ok_and(|uri| {
-                    uri.scheme() == "https"
-                        && uri.host_str().is_some()
-                        && uri.username().is_empty()
-                        && uri.password().is_none()
-                }),
-            "Chutes workload manifest does not describe the approved image deployment",
-        );
-        Ok(SecurityEvidence {
-            state: SecurityState::Verified,
-            provider_id: "chutes".into(),
-            model_id: MODEL_ID.into(),
-            attestation_protocol: "axiom-chutes-image-verification-v1".into(),
-            e2ee_protocol: "chutes-mlkem768-v1".into(),
-            e2ee_encryption_version: 1,
-            trust_policy_version: request.workload_sha256.into(),
-            verified_at_unix_seconds: now,
-            attestation_generation: None,
-            hard_expires_at_unix_seconds: Some(self.expires_at),
-            model_key_fingerprint: hex::encode(Sha256::digest(STANDARD.decode(&self.e2e_pubkey)?)),
-            tls_spki_fingerprint: None,
-            checks: Vec::new(),
-            provider_claims: vec![EvidenceClaim {
-                name: "Chutes deployment".into(),
-                value: CHUTE_ID.into(),
-            }],
-            workload_manifest: Some(self.workload_manifest.clone()),
-        })
     }
 }
 
@@ -532,57 +377,5 @@ mod tests {
         request.references = &[];
         request.allow_long_queue = false;
         assert_eq!(eligible_size(&request), None);
-    }
-
-    #[test]
-    fn rejects_hardware_only_or_rebound_verifier_results() {
-        let manifest = serde_json::json!({
-            "chute_id": CHUTE_ID, "model": "Qwen/Qwen-Image-2512",
-            "source_uri": "https://fixture.example/source", "source_sha256": "a".repeat(64),
-            "container_digest": format!("sha256:{}", "b".repeat(64)),
-            "model_revision": "c".repeat(40), "weights_manifest_sha256": "d".repeat(64),
-        })
-        .to_string();
-        let hash = hex::encode(Sha256::digest(manifest.as_bytes()));
-        let recipient = STANDARD.encode([5; 1184]);
-        let request = Verification {
-            protocol: "axiom-chutes-image-verification-v1",
-            nonce: "fresh",
-            chute_id: CHUTE_ID,
-            instance_id: "instance",
-            e2e_pubkey: &recipient,
-            workload_sha256: &hash,
-            evidence: "{}",
-        };
-        let mut verified = Verified {
-            nonce: request.nonce.into(),
-            chute_id: request.chute_id.into(),
-            instance_id: request.instance_id.into(),
-            e2e_pubkey: recipient.clone(),
-            expires_at: 300,
-            workload_manifest: String::new(),
-        };
-        assert!(verified.proof(&request, 1).is_err());
-
-        let signed_hardware_body = serde_json::json!({
-            "nonce": request.nonce,
-            "evidence": { "quote": "fixture", "nvtrust_evidence": [] },
-        })
-        .to_string();
-        let hardware_hash = hex::encode(Sha256::digest(signed_hardware_body.as_bytes()));
-        let hardware_request = Verification {
-            workload_sha256: &hardware_hash,
-            ..request
-        };
-        verified.workload_manifest = signed_hardware_body;
-        assert!(verified.proof(&hardware_request, 1).is_err());
-
-        verified.workload_manifest = manifest;
-        assert!(verified.proof(&request, 1).is_ok());
-        verified.nonce = "stale".into();
-        assert!(verified.proof(&request, 1).is_err());
-        verified.nonce = request.nonce.into();
-        verified.e2e_pubkey = STANDARD.encode([7; 1184]);
-        assert!(verified.proof(&request, 1).is_err());
     }
 }

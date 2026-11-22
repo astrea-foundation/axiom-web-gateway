@@ -128,72 +128,45 @@ side and the normal 1536² area budget. The account controller authorizes and
 settles these jobs at the configured AstreaAI image price. Existing Desktop
 builds connect to AstreaAI directly.
 
-Keep `chutes_images` omitted while qualifying a Chutes deployment. Activation
-requires a measured gateway configuration with this optional block:
+The pilot is opt-in. Set this block in the measured gateway configuration
+to enable it for accounts allowlisted by the controller.
 
 ```json
 {
   "chutes_images": {
-    "api_key_file": "/run/secrets/chutes-api-key",
-    "verifier": "/usr/local/bin/axiom-chutes-image-verify",
-    "verifier_sha256": "<hex SHA-256 of the installed verifier>",
-    "workload_sha256": "<hex SHA-256 of the approved raw workload manifest>"
+    "api_key_file": "/run/secrets/chutes-api-key"
   }
 }
 ```
 
 Install the credential as a runtime secret. The companion Platform pool
-configuration enables `chutes_image_overflow` for explicit pilot accounts
-using the same workload digest. The gateway keeps one overflow attempt active
-at a time. Its provider HTTP client targets `https://api.chutes.ai` and invokes
-only the E2EE path for the qualified image deployment.
+configuration enables `chutes_image_overflow` for explicit pilot accounts.
+The measured gateway and controller revisions must agree on the signed
+reservation's `chute_id` field.
+Allow egress to `api.chutes.ai`, `api.trustedservices.intel.com`,
+`certificates.trustedservices.intel.com`, and `nras.attestation.nvidia.com`
+in the measured configuration for the pilot. The gateway keeps one overflow
+attempt active at a time.
 
-The verifier is an independently reviewed executable pinned in the measured
-gateway configuration. It receives a JSON object on stdin with `protocol`
-(`axiom-chutes-image-verification-v1`), `nonce`, `chute_id`, `instance_id`,
-`e2e_pubkey`, `workload_sha256`, and `evidence` (the exact Chutes evidence
-response as a JSON string). It must verify hardware status, freshness, the
-recipient key, and a cryptographic link from that key to the exact running
-image deployment and verified model inventory. On acceptance it returns a
-JSON object with `nonce`, `chute_id`, `instance_id`, `e2e_pubkey`, an
-`expires_at` Unix timestamp, and `workload_manifest` as an exact JSON string.
-The manifest contains `chute_id`, `source_uri`, `source_sha256`,
-`container_digest`, `model`, `model_revision`, and `weights_manifest_sha256`.
-The gateway checks identity, freshness and the manifest digest again before
-encrypting to that recipient.
+Chutes manages the serving build and loaded weights for the fixed
+`Qwen-Image-TEE` route `c5cbd4df-7460-502b-a9f1-01071c670692`. Compatible
+updates on that route can take effect without a new Axiom build or model
+pin. The evidence returned to the browser identifies the accepted TEE,
+worker key, and Chutes route. Build and weight provenance is provider-managed.
 
-The adapter authenticates the complete encrypted response and checks the
-exact requested dimensions before converting the JPEG to PNG in the gateway.
-Customer completion requires account settlement. A repeated settlement
-acknowledgement can recover an idempotent debit. An uncertain provider dispatch
-ends the attempt.
-
-### Workload qualification
-
-The public `Qwen-Image-TEE` deployment `068e6ed5-ac43-5dd5-bfc1-30003f3e0526`
-failed workload qualification on 2026-11-22 UTC. Both active workers passed Intel
-DCAP (`UpToDate`, debugging disabled), the nonce and TDX-bound signature checks,
-and NVIDIA GPU attestation. MRTD and RTMR0–3 matched Chutes' published `1.5.0`
-guest baseline. The check used the public reports. Recomputing the ML-KEM key
-binding requires the worker key from authenticated discovery. See the
+For each attempt the gateway discovers a worker for that route, then verifies
+a fresh Intel TDX quote with Intel collateral. It requires `UpToDate`, debug
+disabled, and a match against all five measurements in a published Chutes
+guest baseline. The quote must bind the fresh nonce, exact ML-KEM key, and
+evidence signing key. The gateway verifies the signed evidence body and the
+NVIDIA overall and per-device verdicts for the same challenge. A verification
+failure before reservation returns the request to AstreaAI admission.
 [Chutes evidence guide](https://github.com/chutesai/chutes-api/blob/3b5609f42f84e29dea374382ef1fa95b0fda329c/docs/tee-verification.md)
-and the [guest measurement specification](https://github.com/chutesai/sek8s/blob/3a74f23934c6356444a466c0ec02b4c8ad2bc3dd/docs/specs/tdx-measurement-verification.md).
 
-Each signed body covered the caller nonce, TDX quote and NVIDIA evidence.
-The published image handler pins Qwen to revision
-`25468b98e3276ca6700de15c6628e51b7de54a26` and calls `verify_cache` before
-loading it. The model registry publishes SHA-256 hashes for the 14 safetensors
-files at that revision. The handler also attempts to download and import a
-FlashAttention bundle without passing a commit. The running build and loaded
-weights still need a measured link to the recipient key. See the
-[published handler](https://api.chutes.ai/chutes/code/c5cbd4df-7460-502b-a9f1-01071c670692)
-and the [pinned model revision](https://huggingface.co/Qwen/Qwen-Image-2512/tree/25468b98e3276ca6700de15c6628e51b7de54a26).
-
-Qualification requires evidence from a measured launcher or loader anchored
-in the accepted TEE quote. It must bind a fresh challenge, the deployment and
-instance IDs, and the E2EE key to the running image and handler digests, model
-revision, and measured weight inventory. The serving build must also account for
-executable dependencies loaded at startup. Keep live routing disabled until the
-verifier can validate this chain against the approved workload manifest. The
-gateway test exercises rejection of the hardware evidence as a workload
-manifest, even with a matching configured SHA-256.
+Once verified, the gateway encrypts to that worker and invokes
+`POST /e2e/invoke` using one of its single-use nonces. The adapter
+authenticates the complete encrypted response and checks the exact
+requested dimensions before converting the JPEG to PNG in the gateway.
+Customer completion requires account settlement. Retrying the same
+settlement can recover a lost acknowledgement. An uncertain provider
+dispatch ends the attempt.

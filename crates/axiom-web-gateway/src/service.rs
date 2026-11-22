@@ -1200,7 +1200,7 @@ async fn try_chutes_image(
     ensure!(!cancellation.is_cancelled(), "image request cancelled");
     let admission = state.overflow_account(authority, json!({
         "op": "reserve", "not_after": now()+30, "request_id": request_id, "wire_sha256": wire_sha256,
-        "width": size.width, "height": size.height, "workload_sha256": prepared.workload_sha256,
+        "width": size.width, "height": size.height, "chute_id": chutes_image::CHUTE_ID,
     })).await?;
     let reservation = admission
         .get("reservation")

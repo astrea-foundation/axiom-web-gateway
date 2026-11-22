@@ -222,7 +222,7 @@ async fn run() -> Result<()> {
         authorization_key,
         chutes_images: config
             .chutes_images
-            .clone()
+            .as_ref()
             .map(chutes_image::Client::new)
             .transpose()?,
         http,

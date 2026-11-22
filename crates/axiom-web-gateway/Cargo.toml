@@ -28,15 +28,18 @@ x25519-dalek = { version = "2", features = ["static_secrets"] }
 pkcs8 = { version = "0.10", features = ["pem"] }
 aes-gcm = "0.10"
 chacha20poly1305 = "0.10"
+dcap-qvl = { version = "0.5.2", default-features = false, features = ["report", "ring"] }
 flate2 = "1"
 hkdf = "0.12"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 ml-kem = { version = "0.2.3", features = ["zeroize"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
+ring = "0.17"
 ehbp = { package = "tinfoil-ehbp", git = "https://github.com/tinfoilsh/encrypted-http-body-protocol", rev = "93cc1fa1ad61e19f9a34fb23cb5b5d5635d3edb0" }
 futures-util = "0.3"
 tokio-stream = "0.1"
 url = "2"
+x509-parser = "0.17"
 
 [lints]
 workspace = true
