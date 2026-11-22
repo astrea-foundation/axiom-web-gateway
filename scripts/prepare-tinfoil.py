@@ -61,6 +61,12 @@ def prepare(args):
                 or not set(browsers) <= {f"https://chat{suffix}.axiom.stream", f"https://auth{suffix}.axiom.stream"}):
             raise ValueError("AstreaAI requires its selected environment's exact origins")
         allow = sorted(set(allow) | {"95-133-254-84.nodes.verda.host"})
+    chutes = getattr(args, "chutes_image_overflow", False)
+    if chutes:
+        if not direct:
+            raise ValueError("Chutes image overflow requires an AstreaAI environment")
+        runtime["chutes_images"] = {"api_key_env": "CHUTES_API_KEY"}
+        allow = sorted(set(allow) | {"api.chutes.ai"})
     config = {"cvm-version": args.cvm_version, "cpus": 2, "memory": 4096,
               "networks": {"verification": {"egress": "allowlist", "allow": allow}},
               "attested-keys": [{"id": "axiom-encryption", "key": "x25519", "uid": 10001, "gid": 10001},
@@ -78,6 +84,8 @@ def prepare(args):
         config["containers"][0]["env"].append(
             {"AXIOM_DIRECT_CLIENT_CONFIG_FILE": "/etc/axiom/astreaai-" +
                 ("staging" if staging else "production") + ".json"})
+    if chutes:
+        config["containers"][0]["secrets"] = ["CHUTES_API_KEY"]
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
     # JSON is a strict YAML subset, accepted by the canonical Tinfoil parser.
@@ -98,6 +106,7 @@ def main():
     direct = parser.add_mutually_exclusive_group()
     direct.add_argument("--astreaai-staging", action="store_true")
     direct.add_argument("--astreaai-production", action="store_true")
+    parser.add_argument("--chutes-image-overflow", action="store_true")
     parser.add_argument("--output", required=True)
     prepare(parser.parse_args())
 

@@ -85,6 +85,7 @@ class DeploymentTests(unittest.TestCase):
                              "nras.attestation.nvidia.com"} <= set(network["allow"]))
             self.assertFalse(any("*" in host for host in network["allow"]))
             self.assertNotIn("95-133-254-84.nodes.verda.host", network["allow"])
+            self.assertNotIn("api.chutes.ai", network["allow"])
 
     def test_astreaai_staging_rejects_production_origins(self):
         with tempfile.TemporaryDirectory() as output:
@@ -121,6 +122,26 @@ class DeploymentTests(unittest.TestCase):
             args.astreaai_staging = True
             with self.assertRaises(ValueError):
                 prepare.prepare(args)
+
+    def test_chutes_overflow_uses_a_measured_project_secret_and_egress(self):
+        with tempfile.TemporaryDirectory() as output:
+            args = self.args(output)
+            args.chutes_image_overflow = True
+            with self.assertRaisesRegex(ValueError, "requires an AstreaAI environment"):
+                prepare.prepare(args)
+
+            args.astreaai_staging = True
+            args.backend_origin = "https://api-staging.axiom.stream"
+            args.gateway_origin = "https://axiom-gateway-staging.axiomai.containers.tinfoil.dev"
+            args.browser_origin = ["https://chat-staging.axiom.stream"]
+            config = prepare.prepare(args)
+            container = config["containers"][0]
+            self.assertEqual(container["secrets"], ["CHUTES_API_KEY"])
+            self.assertTrue(container["attestation"])
+            self.assertTrue(container["read_only"])
+            runtime = json.loads(container["env"][0]["AXIOM_GATEWAY_CONFIG_JSON"])
+            self.assertEqual(runtime["chutes_images"], {"api_key_env": "CHUTES_API_KEY"})
+            self.assertIn("api.chutes.ai", config["networks"]["verification"]["allow"])
 
     def test_offline_publisher_signatures_are_domain_separated(self):
         with tempfile.TemporaryDirectory() as output:

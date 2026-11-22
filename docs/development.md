@@ -128,19 +128,23 @@ side and the normal 1536² area budget. The account controller authorizes and
 settles these jobs at the configured AstreaAI image price. Existing Desktop
 builds connect to AstreaAI directly.
 
-The pilot is opt-in. Set this block in the measured gateway configuration
-to enable it for accounts allowlisted by the controller.
+The pilot is opt-in. Create the `CHUTES_API_KEY` project secret in Tinfoil and
+generate the measured config with `--chutes-image-overflow` and the matching
+AstreaAI environment. The generator declares the secret by name and adds
+Chutes egress. Tinfoil injects the credential at runtime, and the gateway reads
+it with this configuration.
 
 ```json
 {
   "chutes_images": {
-    "api_key_file": "/run/secrets/chutes-api-key"
+    "api_key_env": "CHUTES_API_KEY"
   }
 }
 ```
 
-Install the credential as a runtime secret. The companion Platform pool
-configuration enables `chutes_image_overflow` for explicit pilot accounts.
+For deployments that mount secrets as files, set `api_key_file` to the absolute
+mount path. The companion Platform pool configuration enables
+`chutes_image_overflow` for explicit pilot accounts.
 The measured gateway and controller revisions must agree on the signed
 reservation's `chute_id` field.
 Allow egress to `api.chutes.ai`, `api.trustedservices.intel.com`,
