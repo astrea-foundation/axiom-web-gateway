@@ -162,14 +162,38 @@ The manifest contains `chute_id`, `source_uri`, `source_sha256`,
 The gateway checks identity, freshness and the manifest digest again before
 encrypting to that recipient.
 
-The public [Chutes evidence guide](https://github.com/chutesai/chutes-api/blob/main/docs/tee-verification.md)
-covers hardware and the recipient key. A verifier that establishes the full
-serving-build and weights binding for the public image route still needs
-qualification. Local tests use synthetic evidence and encrypted replies in
-the test harness. Keep live routing disabled until qualification succeeds.
-
 The adapter authenticates the complete encrypted response and checks the
 exact requested dimensions before converting the JPEG to PNG in the gateway.
 Customer completion requires account settlement. A repeated settlement
 acknowledgement can recover an idempotent debit. An uncertain provider dispatch
 ends the attempt.
+
+### Workload qualification
+
+The public `Qwen-Image-TEE` deployment `068e6ed5-ac43-5dd5-bfc1-30003f3e0526`
+failed workload qualification on 2026-11-22 UTC. Both active workers passed Intel
+DCAP (`UpToDate`, debugging disabled), the nonce and TDX-bound signature checks,
+and NVIDIA GPU attestation. MRTD and RTMR0–3 matched Chutes' published `1.5.0`
+guest baseline. The check used the public reports. Recomputing the ML-KEM key
+binding requires the worker key from authenticated discovery. See the
+[Chutes evidence guide](https://github.com/chutesai/chutes-api/blob/3b5609f42f84e29dea374382ef1fa95b0fda329c/docs/tee-verification.md)
+and the [guest measurement specification](https://github.com/chutesai/sek8s/blob/3a74f23934c6356444a466c0ec02b4c8ad2bc3dd/docs/specs/tdx-measurement-verification.md).
+
+Each signed body covered the caller nonce, TDX quote and NVIDIA evidence.
+The published image handler pins Qwen to revision
+`25468b98e3276ca6700de15c6628e51b7de54a26` and calls `verify_cache` before
+loading it. The model registry publishes SHA-256 hashes for the 14 safetensors
+files at that revision. The handler also attempts to download and import a
+FlashAttention bundle without passing a commit. The running build and loaded
+weights still need a measured link to the recipient key. See the
+[published handler](https://api.chutes.ai/chutes/code/c5cbd4df-7460-502b-a9f1-01071c670692)
+and the [pinned model revision](https://huggingface.co/Qwen/Qwen-Image-2512/tree/25468b98e3276ca6700de15c6628e51b7de54a26).
+
+Qualification requires evidence from a measured launcher or loader anchored
+in the accepted TEE quote. It must bind a fresh challenge, the deployment and
+instance IDs, and the E2EE key to the running image and handler digests, model
+revision, and measured weight inventory. The serving build must also account for
+executable dependencies loaded at startup. Keep live routing disabled until the
+verifier can validate this chain against the approved workload manifest. The
+gateway test exercises rejection of the hardware evidence as a workload
+manifest, even with a matching configured SHA-256.

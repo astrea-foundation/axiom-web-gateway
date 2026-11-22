@@ -563,6 +563,20 @@ mod tests {
             workload_manifest: String::new(),
         };
         assert!(verified.proof(&request, 1).is_err());
+
+        let signed_hardware_body = serde_json::json!({
+            "nonce": request.nonce,
+            "evidence": { "quote": "fixture", "nvtrust_evidence": [] },
+        })
+        .to_string();
+        let hardware_hash = hex::encode(Sha256::digest(signed_hardware_body.as_bytes()));
+        let hardware_request = Verification {
+            workload_sha256: &hardware_hash,
+            ..request
+        };
+        verified.workload_manifest = signed_hardware_body;
+        assert!(verified.proof(&hardware_request, 1).is_err());
+
         verified.workload_manifest = manifest;
         assert!(verified.proof(&request, 1).is_ok());
         verified.nonce = "stale".into();
