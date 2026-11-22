@@ -117,3 +117,56 @@ Shared inference dependencies must
 advance together to the Desktop commit that contains the separate reference
 normalizer and larger signed image grants; coordinate with the worker and API
 rollout and the encrypted-file size migration before enabling 2K clients.
+
+## Chutes image overflow
+
+The gateway reuses the encrypted `image` operation for the local overflow
+pilot. It can consider Qwen Image 2512 for text-only image requests when the
+account controller reports backpressure. Requests need queue negotiation and
+explicit dimensions on the existing 32-pixel grid, within 2048 pixels per
+side and the normal 1536² area budget. The account controller authorizes and
+settles these jobs at the configured AstreaAI image price. Existing Desktop
+builds connect to AstreaAI directly.
+
+The pilot is opt-in. Set this block in the measured gateway configuration
+to enable it for accounts allowlisted by the controller.
+
+```json
+{
+  "chutes_images": {
+    "api_key_file": "/run/secrets/chutes-api-key"
+  }
+}
+```
+
+Install the credential as a runtime secret. The companion Platform pool
+configuration enables `chutes_image_overflow` for explicit pilot accounts.
+The measured gateway and controller revisions must agree on the signed
+reservation's `chute_id` field.
+Allow egress to `api.chutes.ai`, `api.trustedservices.intel.com`,
+`certificates.trustedservices.intel.com`, and `nras.attestation.nvidia.com`
+in the measured configuration for the pilot. The gateway keeps one overflow
+attempt active at a time.
+
+Chutes manages the serving build and loaded weights for the fixed
+`Qwen-Image-TEE` route `c5cbd4df-7460-502b-a9f1-01071c670692`. Compatible
+updates on that route can take effect without a new Axiom build or model
+pin. The evidence returned to the browser identifies the accepted TEE,
+worker key, and Chutes route. Build and weight provenance is provider-managed.
+
+For each attempt the gateway discovers a worker for that route, then verifies
+a fresh Intel TDX quote with Intel collateral. It requires `UpToDate`, debug
+disabled, and a match against all five measurements in a published Chutes
+guest baseline. The quote must bind the fresh nonce, exact ML-KEM key, and
+evidence signing key. The gateway verifies the signed evidence body and the
+NVIDIA overall and per-device verdicts for the same challenge. A verification
+failure before reservation returns the request to AstreaAI admission.
+[Chutes evidence guide](https://github.com/chutesai/chutes-api/blob/3b5609f42f84e29dea374382ef1fa95b0fda329c/docs/tee-verification.md)
+
+Once verified, the gateway encrypts to that worker and invokes
+`POST /e2e/invoke` using one of its single-use nonces. The adapter
+authenticates the complete encrypted response and checks the exact
+requested dimensions before converting the JPEG to PNG in the gateway.
+Customer completion requires account settlement. Retrying the same
+settlement can recover a lost acknowledgement. An uncertain provider
+dispatch ends the attempt.
