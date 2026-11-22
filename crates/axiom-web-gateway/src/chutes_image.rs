@@ -20,11 +20,19 @@ const MODEL_ID: &str = "chutes:qwen-image-2512";
 const MAX_EVIDENCE: usize = 8 * 1024 * 1024;
 const INVOCATION_TIMEOUT: u64 = 120;
 const REQUIRED_PROOF_SECONDS: u64 = INVOCATION_TIMEOUT + 20;
+const API_KEY_ENV: &str = "CHUTES_API_KEY";
 
 #[derive(Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Config {
-    api_key_file: PathBuf,
+#[serde(untagged, deny_unknown_fields)]
+pub enum Config {
+    File { api_key_file: PathBuf },
+    Tinfoil { api_key_env: ApiKeyEnvironment },
+}
+
+#[derive(Clone, Deserialize)]
+pub enum ApiKeyEnvironment {
+    #[serde(rename = "CHUTES_API_KEY")]
+    Chutes,
 }
 
 pub struct Client {
@@ -115,11 +123,19 @@ pub fn verified_image(
 
 impl Client {
     pub fn new(config: &Config) -> Result<Self> {
-        ensure!(
-            config.api_key_file.is_absolute() && config.api_key_file.metadata()?.len() <= 4096,
-            "invalid Chutes image configuration",
-        );
-        let key = Zeroizing::new(std::fs::read_to_string(&config.api_key_file)?);
+        let key = Zeroizing::new(match config {
+            Config::File { api_key_file } => {
+                ensure!(
+                    api_key_file.is_absolute() && api_key_file.metadata()?.len() <= 4096,
+                    "invalid Chutes image configuration",
+                );
+                std::fs::read_to_string(api_key_file)?
+            }
+            Config::Tinfoil {
+                api_key_env: ApiKeyEnvironment::Chutes,
+            } => std::env::var(API_KEY_ENV)
+                .map_err(|_| anyhow::anyhow!("runtime Chutes API key is unavailable"))?,
+        });
         let key = key.trim();
         ensure!(
             (32..=4096).contains(&key.len())
@@ -306,6 +322,25 @@ fn png_from_jpeg(jpeg: &[u8], size: ImageDimensions) -> Result<Zeroizing<Vec<u8>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn requires_exactly_one_supported_credential_source() {
+        let config = serde_json::from_str::<Config>(r#"{"api_key_env":"CHUTES_API_KEY"}"#).unwrap();
+        assert!(matches!(config, Config::Tinfoil { .. }));
+        let config =
+            serde_json::from_str::<Config>(r#"{"api_key_file":"/run/secrets/chutes-api-key"}"#)
+                .unwrap();
+        assert!(matches!(config, Config::File { .. }));
+
+        for invalid in [
+            "{}",
+            r#"{"api_key_env":"OTHER_API_KEY"}"#,
+            r#"{"api_key_env":"CHUTES_API_KEY","api_key_file":"/run/secrets/chutes-api-key"}"#,
+            r#"{"api_key":"inline"}"#,
+        ] {
+            assert!(serde_json::from_str::<Config>(invalid).is_err());
+        }
+    }
 
     #[test]
     fn uses_the_exact_request_size_and_normalizes_authenticated_jpeg() {
