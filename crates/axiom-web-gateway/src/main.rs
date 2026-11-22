@@ -1,4 +1,5 @@
 mod attestation;
+mod chutes_image;
 mod lifecycle;
 mod recovery;
 mod service;
@@ -35,6 +36,8 @@ pub struct Config {
     pub encryption_key_path: String,
     pub authorization_key_path: String,
     pub verifier: String,
+    #[serde(default)]
+    pub chutes_images: Option<chutes_image::Config>,
 }
 
 #[must_use]
@@ -217,6 +220,11 @@ async fn run() -> Result<()> {
         config: config.clone(),
         identity: Arc::clone(&identity),
         authorization_key,
+        chutes_images: config
+            .chutes_images
+            .as_ref()
+            .map(chutes_image::Client::new)
+            .transpose()?,
         http,
         collector: RwLock::new(collector),
         sessions: Mutex::new(BTreeMap::new()),
