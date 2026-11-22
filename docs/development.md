@@ -117,3 +117,59 @@ Shared inference dependencies must
 advance together to the Desktop commit that contains the separate reference
 normalizer and larger signed image grants; coordinate with the worker and API
 rollout and the encrypted-file size migration before enabling 2K clients.
+
+## Chutes image overflow
+
+The gateway reuses the encrypted `image` operation for the local overflow
+pilot. It can consider Qwen Image 2512 for text-only image requests when the
+account controller reports backpressure. Requests need queue negotiation and
+explicit dimensions on the existing 32-pixel grid, within 2048 pixels per
+side and the normal 1536² area budget. The account controller authorizes and
+settles these jobs at the configured AstreaAI image price. Existing Desktop
+builds connect to AstreaAI directly.
+
+Keep `chutes_images` omitted while qualifying a Chutes deployment. Activation
+requires a measured gateway configuration with this optional block:
+
+```json
+{
+  "chutes_images": {
+    "api_key_file": "/run/secrets/chutes-api-key",
+    "verifier": "/usr/local/bin/axiom-chutes-image-verify",
+    "verifier_sha256": "<hex SHA-256 of the installed verifier>",
+    "workload_sha256": "<hex SHA-256 of the approved raw workload manifest>"
+  }
+}
+```
+
+Install the credential as a runtime secret. The companion Platform pool
+configuration enables `chutes_image_overflow` for explicit pilot accounts
+using the same workload digest. The gateway keeps one overflow attempt active
+at a time. Its provider HTTP client targets `https://api.chutes.ai` and invokes
+only the E2EE path for the qualified image deployment.
+
+The verifier is an independently reviewed executable pinned in the measured
+gateway configuration. It receives a JSON object on stdin with `protocol`
+(`axiom-chutes-image-verification-v1`), `nonce`, `chute_id`, `instance_id`,
+`e2e_pubkey`, `workload_sha256`, and `evidence` (the exact Chutes evidence
+response as a JSON string). It must verify hardware status, freshness, the
+recipient key, and a cryptographic link from that key to the exact running
+image deployment and verified model inventory. On acceptance it returns a
+JSON object with `nonce`, `chute_id`, `instance_id`, `e2e_pubkey`, an
+`expires_at` Unix timestamp, and `workload_manifest` as an exact JSON string.
+The manifest contains `chute_id`, `source_uri`, `source_sha256`,
+`container_digest`, `model`, `model_revision`, and `weights_manifest_sha256`.
+The gateway checks identity, freshness and the manifest digest again before
+encrypting to that recipient.
+
+The public [Chutes evidence guide](https://github.com/chutesai/chutes-api/blob/main/docs/tee-verification.md)
+covers hardware and the recipient key. A verifier that establishes the full
+serving-build and weights binding for the public image route still needs
+qualification. Local tests use synthetic evidence and encrypted replies in
+the test harness. Keep live routing disabled until qualification succeeds.
+
+The adapter authenticates the complete encrypted response and checks the
+exact requested dimensions before converting the JPEG to PNG in the gateway.
+Customer completion requires account settlement. A repeated settlement
+acknowledgement can recover an idempotent debit. An uncertain provider dispatch
+ends the attempt.

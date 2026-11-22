@@ -1,7 +1,7 @@
 use crate::{
     Config,
     attestation::Collector,
-    now,
+    chutes_image, now,
     sessions::{Activity, HEARTBEAT_SECONDS, IDLE_SECONDS},
     transport::{Identity, Reply},
 };
@@ -12,11 +12,13 @@ use axiom_gateway_protocol::{
 };
 use axiom_web_gateway_core::{
     inference::{
-        ImageDimensions, ImageGenerationRequest, InferenceRequest, MAX_GENERATED_IMAGE_BYTES,
-        ProviderEvent,
+        ImageDimensions, ImageGenerationProgress, ImageGenerationRequest, ImageGenerationStage,
+        InferenceRequest, MAX_GENERATED_IMAGE_BYTES, ProviderEvent,
     },
     openai_compat::{ChatCompletionRequest, CompatMode},
-    secure_client::{ApiCredential, SecureClient, SecureClientConfig, SecurityState},
+    secure_client::{
+        ApiCredential, GeneratedImage, SecureClient, SecureClientConfig, SecurityState,
+    },
 };
 use axum::{
     Json, Router,
@@ -40,6 +42,7 @@ pub struct State {
     pub config: Config,
     pub identity: Arc<Identity>,
     pub authorization_key: ed25519_dalek::SigningKey,
+    pub chutes_images: Option<chutes_image::Client>,
     pub http: reqwest::Client,
     pub collector: RwLock<Arc<Collector>>,
     pub sessions: Mutex<BTreeMap<String, Arc<Session>>>,
@@ -62,6 +65,7 @@ pub struct Session {
     account: String,
     key: BrowserKey,
     client: Arc<SecureClient>,
+    overflow_authority: Option<Zeroizing<String>>,
     expires_at: u64,
     activity: Arc<Activity>,
     replays: Mutex<BTreeMap<String, u64>>,
@@ -305,6 +309,31 @@ impl State {
         }
         serde_json::from_slice(&bytes).context("invalid backend delegation response")
     }
+
+    async fn overflow_account(&self, authority: &str, mut payload: Value) -> Result<Value> {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+        let lease = self.lease().await?;
+        payload["delegation"] = json!(hex::encode(Sha256::digest(authority.as_bytes())));
+        let raw = serde_json::to_vec(&payload)?;
+        let document = json!({
+            "payload": URL_SAFE_NO_PAD.encode(&raw),
+            "signature": self.sign(b"axiom-gateway-image-overflow-v1", &raw),
+        });
+        let response = self
+            .http
+            .post(format!(
+                "{}/api/v1/pool/image-overflow",
+                self.config.backend_origin
+            ))
+            .bearer_auth(authority)
+            .header("x-gateway-lease", lease.as_str())
+            .timeout(Duration::from_secs(8))
+            .json(&document)
+            .send()
+            .await?;
+        serde_json::from_slice(&chutes_image::bounded(response, 4096).await?)
+            .context("invalid image overflow authorization response")
+    }
 }
 
 pub fn router(state: Arc<State>) -> Result<Router> {
@@ -457,6 +486,7 @@ async fn session(
                 account,
                 key,
                 client,
+            overflow_authority: state.chutes_images.as_ref().map(|_| Zeroizing::new(token.to_owned())),
                 expires_at,
                 activity: Activity::new(now()),
                 replays: Mutex::new(BTreeMap::new()),
@@ -926,7 +956,9 @@ async fn execute(
                 .map(|(id, image)| (id.as_str(), image))
                 .collect::<Vec<_>>();
             image_operation(
+                state,
                 session,
+                &payload.request_id,
                 ImageGenerationRequest {
                     chat_model_id: &model,
                     prompt: &prompt,
@@ -1061,16 +1093,36 @@ async fn admit_execution(
 }
 
 async fn image_operation(
+    state: &State,
     session: &Session,
+    request_id: &str,
     request: ImageGenerationRequest<'_>,
     cancellation: &CancellationToken,
     output: &mut Output,
 ) -> Result<Value> {
     let allow_long_queue = request.allow_long_queue;
     let (sender, mut receiver) = mpsc::channel(16);
-    let future = session
-        .client
-        .image_request_with_progress(request, sender, cancellation.clone());
+    let future = async {
+        if let Some(image) = Box::pin(try_chutes_image(
+            state,
+            session,
+            request_id,
+            &request,
+            cancellation,
+            &sender,
+        ))
+        .await?
+        {
+            return Ok(image);
+        }
+        ensure!(!cancellation.is_cancelled(), "image request cancelled");
+        Ok::<_, anyhow::Error>(
+            session
+                .client
+                .image_request_with_progress(request, sender, cancellation.clone())
+                .await?,
+        )
+    };
     tokio::pin!(future);
     let mut image = loop {
         tokio::select! {
@@ -1113,6 +1165,102 @@ async fn image_operation(
         .context("invalid image metadata")?
         .remove("data");
     Ok(json!({"upstream_response_verified":true,"image":metadata,"image_data_length":length}))
+}
+
+async fn try_chutes_image(
+    state: &State,
+    session: &Session,
+    request_id: &str,
+    request: &ImageGenerationRequest<'_>,
+    cancellation: &CancellationToken,
+    progress: &mpsc::Sender<ImageGenerationProgress>,
+) -> Result<Option<GeneratedImage>> {
+    let (Some(client), Some(authority), Some(size)) = (
+        &state.chutes_images,
+        &session.overflow_authority,
+        chutes_image::eligible_size(request),
+    ) else {
+        return Ok(None);
+    };
+    let start = now();
+    let prepared = tokio::select! {
+        biased;
+        () = cancellation.cancelled() => anyhow::bail!("image request cancelled"),
+        prepared = async {
+            let status = state.overflow_account(authority, json!({"op":"check","not_after":now()+30})).await?;
+            ensure!(status["available"].as_bool() == Some(true), "image overflow is unavailable");
+            client.prepare(request.prompt, size).await
+        } => match prepared {
+            Ok(value) => value,
+            // No prompt or grant has been sent. Use ordinary AstreaAI admission.
+            Err(_) => return Ok(None),
+        },
+    };
+    let wire_sha256 = prepared.wire_sha256.clone();
+    ensure!(!cancellation.is_cancelled(), "image request cancelled");
+    let admission = state.overflow_account(authority, json!({
+        "op": "reserve", "not_after": now()+30, "request_id": request_id, "wire_sha256": wire_sha256,
+        "width": size.width, "height": size.height, "workload_sha256": prepared.workload_sha256,
+    })).await?;
+    let reservation = admission
+        .get("reservation")
+        .context("missing image overflow admission")?;
+    if reservation.is_null() {
+        return Ok(None);
+    }
+    let reservation_id = reservation["reservation_id"]
+        .as_str()
+        .context("missing image overflow reservation")?;
+    let maximum = reservation["charge_microusd"]
+        .as_u64()
+        .context("missing image overflow price")?;
+    ensure!(!cancellation.is_cancelled(), "image request cancelled");
+    progress
+        .send(ImageGenerationProgress {
+            stage: ImageGenerationStage::Generating,
+            percent: 1,
+        })
+        .await?;
+    // After dispatch, execution is potentially billable and the one-use nonce
+    // is spent. Transport or authentication failures cannot switch providers.
+    let (png, evidence) = tokio::select! {
+        biased;
+        () = cancellation.cancelled() => anyhow::bail!("image request cancelled"),
+        result = client.invoke(prepared, size) => result?,
+    };
+    let completed_at = now();
+    progress
+        .send(ImageGenerationProgress {
+            stage: ImageGenerationStage::Finishing,
+            percent: 99,
+        })
+        .await?;
+    let receipt = json!({
+        "op": "settle", "reservation_id": reservation_id, "request_id": request_id,
+        "wire_sha256": wire_sha256, "completed_at": completed_at,
+    });
+    let settlement = match state.overflow_account(authority, receipt.clone()).await {
+        Ok(settlement) => settlement,
+        // An acknowledgement can be lost after commit. Resubmit only the
+        // exact signed settlement; the provider invocation is never repeated.
+        Err(_) => state.overflow_account(authority, receipt).await?,
+    };
+    ensure!(
+        settlement["charge_microusd"].as_u64() == Some(maximum)
+            && evidence
+                .hard_expires_at_unix_seconds
+                .is_some_and(|deadline| deadline > now()),
+        "image overflow completion or settlement rejected",
+    );
+    Ok(Some(chutes_image::verified_image(
+        request_id,
+        request.chat_model_id,
+        size,
+        &png,
+        evidence,
+        maximum,
+        start,
+    )))
 }
 
 async fn infer(
@@ -1272,6 +1420,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
+            overflow_authority: None,
             expires_at: current + 900,
             activity: Activity::new(current),
             replays: Mutex::new(BTreeMap::new()),
