@@ -125,8 +125,9 @@ pilot. It can consider Qwen Image 2512 for text-only image requests when the
 account controller reports backpressure. Requests need queue negotiation and
 explicit dimensions on the existing 32-pixel grid, within 2048 pixels per
 side and the normal 1536² area budget. The account controller authorizes and
-settles these jobs at the configured AstreaAI image price. Existing Desktop
-builds connect to AstreaAI directly.
+settles these jobs at the configured AstreaAI image price. The Desktop staging
+preview uses the same measured gateway for overflow and direct AstreaAI
+admission for its primary path.
 
 The pilot is opt-in. Create the `CHUTES_API_KEY` project secret in Tinfoil and
 generate the measured config with `--chutes-image-overflow` and the matching

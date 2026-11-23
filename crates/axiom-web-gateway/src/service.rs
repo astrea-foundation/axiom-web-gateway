@@ -120,6 +120,8 @@ enum Operation {
         aspect_ratio: Option<String>,
         #[serde(default)]
         image_queue: bool,
+        #[serde(default)]
+        overflow_only: bool,
     },
     Infer {
         request: Box<ChatCompletionRequest>,
@@ -497,7 +499,8 @@ async fn session(
         let mut uploads = state.uploads.lock().await;
         admit_session(&mut sessions, &mut uploads, candidate, state.config.max_sessions, now())?;
         Ok::<_, anyhow::Error>(json!({"protocol":PROTOCOL,"session_id":id,"expires_at":expires_at,
-            "image_queue":1,"stream_recovery":1,"session_lifecycle":{"version":1,"heartbeat_interval_seconds":HEARTBEAT_SECONDS,"idle_timeout_seconds":IDLE_SECONDS}}))
+            "image_queue":1,"image_overflow":u8::from(state.chutes_images.is_some()),
+            "stream_recovery":1,"session_lifecycle":{"version":1,"heartbeat_interval_seconds":HEARTBEAT_SECONDS,"idle_timeout_seconds":IDLE_SECONDS}}))
     }
     .await;
     let payload = match result {
@@ -908,6 +911,7 @@ async fn execute(
             dimensions,
             aspect_ratio,
             image_queue,
+            overflow_only,
         } => {
             ensure!(
                 !prompt.trim().is_empty() && prompt.len() <= 8192,
@@ -916,6 +920,10 @@ async fn execute(
             ensure!(
                 dimensions.is_none() || aspect_ratio.is_none(),
                 "choose dimensions or aspect ratio"
+            );
+            ensure!(
+                !overflow_only || (image_queue && dimensions.is_some() && references.is_empty()),
+                "overflow-only images require the queue, explicit dimensions and no references"
             );
             let _permit = admit_execution(
                 state,
@@ -966,6 +974,7 @@ async fn execute(
                     dimensions,
                     allow_long_queue: image_queue,
                 },
+                overflow_only,
                 cancellation,
                 output,
             )
@@ -1097,6 +1106,7 @@ async fn image_operation(
     session: &Session,
     request_id: &str,
     request: ImageGenerationRequest<'_>,
+    overflow_only: bool,
     cancellation: &CancellationToken,
     output: &mut Output,
 ) -> Result<Value> {
@@ -1113,18 +1123,21 @@ async fn image_operation(
         ))
         .await?
         {
-            return Ok(image);
+            return Ok(Some(image));
         }
         ensure!(!cancellation.is_cancelled(), "image request cancelled");
-        Ok::<_, anyhow::Error>(
+        if overflow_only {
+            return Ok(None);
+        }
+        Ok::<_, anyhow::Error>(Some(
             session
                 .client
                 .image_request_with_progress(request, sender, cancellation.clone())
                 .await?,
-        )
+        ))
     };
     tokio::pin!(future);
-    let mut image = loop {
+    let image = loop {
         tokio::select! {
             () = cancellation.cancelled() => {
                 if allow_long_queue {
@@ -1136,6 +1149,9 @@ async fn image_operation(
             result = &mut future => break result.context(RequestPhase::UpstreamExchange)?,
             Some(progress) = receiver.recv() => output.send("image_progress", serde_json::to_value(progress)?).await?,
         }
+    };
+    let Some(mut image) = image else {
+        return Ok(json!({"overflow_admitted":false}));
     };
     ensure!(
         image.evidence.state == SecurityState::Verified
@@ -1385,6 +1401,7 @@ mod tests {
             legacy,
             Operation::Image {
                 image_queue: false,
+                overflow_only: false,
                 ..
             }
         ));
@@ -1399,6 +1416,15 @@ mod tests {
             }
         ));
         assert_eq!(queued.timeout(), Duration::from_secs(840));
+        payload["overflow_only"] = json!(true);
+        assert!(matches!(
+            serde_json::from_value::<Operation>(payload.clone()).unwrap(),
+            Operation::Image {
+                image_queue: true,
+                overflow_only: true,
+                ..
+            }
+        ));
         payload["image_queue"] = json!("true");
         assert!(serde_json::from_value::<Operation>(payload).is_err());
     }
